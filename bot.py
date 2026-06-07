@@ -10,26 +10,33 @@ from datetime import datetime
 TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+OWNER_ID = int(os.getenv("OWNER_ID", 0))  # Your Discord User ID
 
 if not TOKEN:
     print("ERROR: DISCORD_TOKEN not set")
     exit(1)
 
+if not OWNER_ID:
+    print("WARNING: OWNER_ID not set. Owner-only commands will be disabled.")
+
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.members = True
 bot = commands.Bot(command_prefix='.', intents=intents)
 
-# Global storage - ALL scripts from ALL users
 script_library = {}
 conversation_history = {}
+
+def is_owner(ctx):
+    """Check if command user is the bot owner"""
+    return ctx.author.id == OWNER_ID
 
 # ============================================================
 # OBFUSCATION DETECTION
 # ============================================================
 
 def detect_obfuscation(code: str) -> dict:
-    """Detect obfuscation including Wynfuscate, WeAreDevs, MoonSec, Luraph, IronBrew"""
-    
     result = {
         "is_obfuscated": False,
         "type": "clean",
@@ -41,7 +48,6 @@ def detect_obfuscation(code: str) -> dict:
     
     code_lower = code.lower()
     
-    # Wynfuscate detection
     if 'wynfuscate' in code_lower or 'getpolsec.com' in code_lower:
         result["is_obfuscated"] = True
         result["type"] = "Wynfuscate"
@@ -49,9 +55,7 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Wynfuscate obfuscator watermark")
         return result
     
-    # Check for clean script indicators
     clean_indicators = 0
-    
     if re.search(r'game:GetService\(["\'](TweenService|Players|RunService|ReplicatedStorage)["\']\)', code):
         clean_indicators += 1
     if re.search(r'function\s+[A-Za-z][A-Za-z0-9_]+\s*\([^)]*\)', code):
@@ -70,7 +74,6 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Readable source code")
         return result
     
-    # Actual obfuscation
     if re.search(r'local d = \{\\d{3}', code):
         result["is_obfuscated"] = True
         result["type"] = "WeAreDevs"
@@ -102,12 +105,10 @@ def detect_obfuscation(code: str) -> dict:
     result["is_obfuscated"] = False
     result["type"] = "clean"
     result["confidence"] = 90
-    result["details"].append("No obfuscation patterns detected")
     
     return result
 
 def analyze_script_stats(code: str) -> dict:
-    """Extract basic statistics"""
     return {
         "size_kb": len(code) / 1024,
         "lines": code.count('\n'),
@@ -121,23 +122,19 @@ def analyze_script_stats(code: str) -> dict:
 # ============================================================
 
 async def send_webhook(content: str, filename: str, code: str, user: str):
-    """Send script to webhook as file"""
     if not WEBHOOK_URL:
         return
     
     try:
         async with aiohttp.ClientSession() as session:
             webhook = discord.Webhook.from_url(WEBHOOK_URL, session=session)
-            
             file_obj = discord.File(io.StringIO(code), filename=filename)
-            
             embed = discord.Embed(
                 title="📁 Script Received",
                 description=f"**User:** {user}\n**File:** {filename}\n**Size:** {len(code)/1024:.2f} KB",
                 color=0x00ff00,
                 timestamp=datetime.utcnow()
             )
-            
             await webhook.send(embed=embed, file=file_obj)
     except Exception as e:
         print(f"Webhook error: {e}")
@@ -241,13 +238,270 @@ def sanitize_response(response: str) -> str:
     return response
 
 # ============================================================
-# DISCORD BOT
+# OWNER-ONLY SERVER MANAGEMENT COMMANDS
+# ============================================================
+
+@bot.command(name='createchannel')
+@commands.is_owner()
+async def create_channel(ctx, channel_name: str, channel_type: str = "text"):
+    """Create a new channel (owner only). Types: text, voice, category"""
+    try:
+        guild = ctx.guild
+        
+        if channel_type.lower() == "text":
+            await guild.create_text_channel(channel_name)
+            await ctx.send(f"✅ Created text channel: #{channel_name}")
+        elif channel_type.lower() == "voice":
+            await guild.create_voice_channel(channel_name)
+            await ctx.send(f"✅ Created voice channel: {channel_name}")
+        elif channel_type.lower() == "category":
+            await guild.create_category(channel_name)
+            await ctx.send(f"✅ Created category: {channel_name}")
+        else:
+            await ctx.send("❌ Invalid type. Use: text, voice, or category")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to create channels")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='deletchannel')
+@commands.is_owner()
+async def delete_channel(ctx, channel: discord.TextChannel):
+    """Delete a channel (owner only)"""
+    try:
+        await channel.delete()
+        await ctx.send(f"✅ Deleted channel: #{channel.name}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to delete channels")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='createrole')
+@commands.is_owner()
+async def create_role(ctx, role_name: str, color: str = None):
+    """Create a new role (owner only). Optional color: hex or name (red, blue, etc.)"""
+    try:
+        color_obj = None
+        if color:
+            # Check if color is a hex code
+            if color.startswith('#'):
+                color_obj = discord.Color(int(color[1:], 16))
+            else:
+                # Try to get named color
+                color_map = {
+                    'red': discord.Color.red(),
+                    'blue': discord.Color.blue(),
+                    'green': discord.Color.green(),
+                    'yellow': discord.Color.yellow(),
+                    'purple': discord.Color.purple(),
+                    'orange': discord.Color.orange(),
+                    'pink': discord.Color.magenta(),
+                    'black': discord.Color.dark_grey(),
+                    'white': discord.Color.light_grey(),
+                }
+                if color.lower() in color_map:
+                    color_obj = color_map[color.lower()]
+                else:
+                    color_obj = discord.Color.default()
+        else:
+            color_obj = discord.Color.default()
+        
+        role = await ctx.guild.create_role(name=role_name, color=color_obj)
+        await ctx.send(f"✅ Created role: {role.mention}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to create roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='deleterole')
+@commands.is_owner()
+async def delete_role(ctx, role: discord.Role):
+    """Delete a role (owner only)"""
+    try:
+        await role.delete()
+        await ctx.send(f"✅ Deleted role: {role.name}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to delete roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='colorrole')
+@commands.is_owner()
+async def color_role(ctx, role: discord.Role, color: str):
+    """Change role color (owner only). Example: .colorrole @Role #FF0000 or red"""
+    try:
+        if color.startswith('#'):
+            color_obj = discord.Color(int(color[1:], 16))
+        else:
+            color_map = {
+                'red': discord.Color.red(),
+                'blue': discord.Color.blue(),
+                'green': discord.Color.green(),
+                'yellow': discord.Color.yellow(),
+                'purple': discord.Color.purple(),
+                'orange': discord.Color.orange(),
+                'pink': discord.Color.magenta(),
+                'black': discord.Color.dark_grey(),
+                'white': discord.Color.light_grey(),
+            }
+            if color.lower() in color_map:
+                color_obj = color_map[color.lower()]
+            else:
+                await ctx.send("❌ Invalid color. Use hex (#FF0000) or name (red, blue, etc.)")
+                return
+        
+        await role.edit(color=color_obj)
+        await ctx.send(f"✅ Changed color of {role.mention} to {color}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to edit roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='moverole')
+@commands.is_owner()
+async def move_role(ctx, role: discord.Role, position: int):
+    """Move role to a position (owner only). Lower number = higher position"""
+    try:
+        await role.edit(position=position)
+        await ctx.send(f"✅ Moved {role.mention} to position {position}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to move roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='roleabove')
+@commands.is_owner()
+async def role_above(ctx, role_to_move: discord.Role, target_role: discord.Role):
+    """Move a role above another role (owner only)"""
+    try:
+        await role_to_move.edit(position=target_role.position + 1)
+        await ctx.send(f"✅ Moved {role_to_move.mention} above {target_role.mention}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to move roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='rolebelow')
+@commands.is_owner()
+async def role_below(ctx, role_to_move: discord.Role, target_role: discord.Role):
+    """Move a role below another role (owner only)"""
+    try:
+        await role_to_move.edit(position=target_role.position - 1)
+        await ctx.send(f"✅ Moved {role_to_move.mention} below {target_role.mention}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to move roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='addrole')
+@commands.is_owner()
+async def add_role_to_member(ctx, member: discord.Member, role: discord.Role):
+    """Add a role to a member (owner only)"""
+    try:
+        await member.add_roles(role)
+        await ctx.send(f"✅ Added {role.mention} to {member.mention}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to add roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='removerole')
+@commands.is_owner()
+async def remove_role_from_member(ctx, member: discord.Member, role: discord.Role):
+    """Remove a role from a member (owner only)"""
+    try:
+        await member.remove_roles(role)
+        await ctx.send(f"✅ Removed {role.mention} from {member.mention}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to remove roles")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='setnick')
+@commands.is_owner()
+async def set_nickname(ctx, member: discord.Member, *, nickname: str = None):
+    """Set a member's nickname (owner only). Use without nickname to reset"""
+    try:
+        await member.edit(nick=nickname)
+        if nickname:
+            await ctx.send(f"✅ Set {member.mention}'s nickname to {nickname}")
+        else:
+            await ctx.send(f"✅ Reset {member.mention}'s nickname")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to change nicknames")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='slowmode')
+@commands.is_owner()
+async def set_slowmode(ctx, channel: discord.TextChannel, seconds: int = 0):
+    """Set slowmode for a channel (owner only). 0 to disable"""
+    try:
+        await channel.edit(slowmode_delay=seconds)
+        if seconds > 0:
+            await ctx.send(f"✅ Set slowmode in #{channel.name} to {seconds} seconds")
+        else:
+            await ctx.send(f"✅ Disabled slowmode in #{channel.name}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to edit channel settings")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='lock')
+@commands.is_owner()
+async def lock_channel(ctx, channel: discord.TextChannel = None):
+    """Lock a channel (prevent @everyone from sending messages)"""
+    channel = channel or ctx.channel
+    try:
+        overwrite = channel.overwrites_for(ctx.guild.default_role)
+        overwrite.send_messages = False
+        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+        await ctx.send(f"🔒 Locked #{channel.name}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to lock channels")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='unlock')
+@commands.is_owner()
+async def unlock_channel(ctx, channel: discord.TextChannel = None):
+    """Unlock a channel (allow @everyone to send messages)"""
+    channel = channel or ctx.channel
+    try:
+        overwrite = channel.overwrites_for(ctx.guild.default_role)
+        overwrite.send_messages = None
+        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+        await ctx.send(f"🔓 Unlocked #{channel.name}")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to unlock channels")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+@bot.command(name='purge')
+@commands.is_owner()
+async def purge_messages(ctx, amount: int):
+    """Delete a number of messages in the channel (owner only)"""
+    if amount < 1 or amount > 1000:
+        await ctx.send("❌ Amount must be between 1 and 1000")
+        return
+    try:
+        deleted = await ctx.channel.purge(limit=amount)
+        msg = await ctx.send(f"✅ Deleted {len(deleted)} messages")
+        await msg.delete(delay=3)
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to delete messages")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+# ============================================================
+# DISCORD BOT MAIN
 # ============================================================
 
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"✅ GrimHub ready - {bot.user}")
+    print(f"Owner ID: {OWNER_ID}")
     print(f"AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}")
     print(f"Webhook: {'ENABLED' if WEBHOOK_URL else 'DISABLED'}")
 
@@ -318,7 +572,6 @@ async def process_and_store(ctx, code: str, filename: str):
     obf = detect_obfuscation(code)
     stats = analyze_script_stats(code)
     
-    # Generate unique name with timestamp to avoid overwriting
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = filename.replace('.lua', '').replace('.txt', '')
     unique_name = f"{name}_{timestamp}"
@@ -331,7 +584,6 @@ async def process_and_store(ctx, code: str, filename: str):
     else:
         msg += f"✅ **Clean script**\n"
     
-    # Store in GLOBAL library with unique name
     script_library[unique_name] = {
         "code": code,
         "stats": stats,
@@ -343,21 +595,17 @@ async def process_and_store(ctx, code: str, filename: str):
     }
     
     await ctx.send(msg)
-    
-    # Send to webhook
     await send_webhook(ctx.message.content, filename, code, str(ctx.author))
 
 @bot.command(name='get')
 async def get_script(ctx, *, name):
     """Retrieve a stored script (use exact name from .list)"""
-    # Try exact match first
     if name in script_library:
         data = script_library[name]
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
         return
     
-    # Try partial match (find by original name without timestamp)
     matches = []
     for key, data in script_library.items():
         if data["original_name"] == name or key.startswith(name):
@@ -380,12 +628,11 @@ async def list_scripts(ctx):
         await ctx.send("No scripts stored. Use `.feed` to add some.")
         return
     
-    # Sort by timestamp (newest first)
     sorted_scripts = sorted(script_library.items(), key=lambda x: x[1]["timestamp"], reverse=True)
     
     msg = f"**📚 Stored Scripts ({len(script_library)} total)**\n\n"
     
-    for name, data in sorted_scripts[:25]:  # Show up to 25
+    for name, data in sorted_scripts[:25]:
         status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
         obf_type = f" [{data['obfuscation']['type']}]" if data["obfuscation"]["is_obfuscated"] else ""
         msg += f"{status} `{name}` - {data['stats']['size_kb']:.2f} KB{obf_type}\n"
@@ -394,7 +641,6 @@ async def list_scripts(ctx):
     if len(sorted_scripts) > 25:
         msg += f"\n*... and {len(sorted_scripts) - 25} more. Use `.listall` to see everything.*"
     
-    # Split into multiple messages if too long
     if len(msg) > 1900:
         for i in range(0, len(msg), 1900):
             await ctx.send(msg[i:i+1900])
@@ -416,7 +662,6 @@ async def list_all_scripts(ctx):
         status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
         msg += f"{status} `{name}` - {data['stats']['size_kb']:.2f} KB (by {data['uploaded_by']})\n"
     
-    # Split into multiple messages
     if len(msg) > 1900:
         for i in range(0, len(msg), 1900):
             await ctx.send(msg[i:i+1900])
@@ -425,15 +670,14 @@ async def list_all_scripts(ctx):
 
 @bot.command(name='remove')
 async def remove_script(ctx, *, name):
-    """Remove a stored script (owner or admin only)"""
+    """Remove a stored script (owner only)"""
+    if not is_owner(ctx):
+        await ctx.send("❌ Only the bot owner can remove scripts.")
+        return
+    
     if name in script_library:
-        data = script_library[name]
-        # Check if user is the uploader or has admin perms
-        if str(ctx.author) == data["uploaded_by"] or ctx.author.guild_permissions.administrator:
-            del script_library[name]
-            await ctx.send(f"✅ Removed '{name}'")
-        else:
-            await ctx.send(f"❌ You can only remove scripts you uploaded. (Uploaded by: {data['uploaded_by']})")
+        del script_library[name]
+        await ctx.send(f"✅ Removed '{name}'")
     else:
         await ctx.send(f"❌ Script '{name}' not found")
 
@@ -471,16 +715,35 @@ async def list_commands(ctx):
     await ctx.send("""
 **GrimHub Commands**
 
+**Script Management:**
 `.feed <file>` - Upload a .lua or .txt file
 `.feed <url>` - Fetch from ANY URL (pastebin, pastefy, polsec, etc.)
 `.list` - Show ALL stored scripts (25 newest)
 `.listall` - Show ALL stored scripts (complete list)
 `.get <name>` - Retrieve a stored script
 `.info <name>` - Show script details
-`.remove <name>` - Delete a script (owner or admin)
-`.clear` - Clear AI conversation history
+`.remove <name>` - Delete a script (owner only)
 
-**Just ping me** - Chat with AI
+**Server Management (Owner Only):**
+`.createchannel <name> [text/voice/category]` - Create a channel
+`.deletchannel <channel>` - Delete a channel
+`.createrole <name> [color]` - Create a role
+`.deleterole <role>` - Delete a role
+`.colorrole <role> <color>` - Change role color
+`.moverole <role> <position>` - Move role position
+`.roleabove <role> <target>` - Move role above another
+`.rolebelow <role> <target>` - Move role below another
+`.addrole <member> <role>` - Add role to member
+`.removerole <member> <role>` - Remove role from member
+`.setnick <member> [nickname]` - Set member nickname
+`.slowmode <channel> <seconds>` - Set channel slowmode
+`.lock [channel]` - Lock a channel
+`.unlock [channel]` - Unlock a channel
+`.purge <amount>` - Delete messages
+
+**Other:**
+`.clear` - Clear AI conversation history
+**Ping me** - Chat with AI
 
 *Detects: Wynfuscate, WeAreDevs, MoonSec V3, Luraph, IronBrew*
 """)
