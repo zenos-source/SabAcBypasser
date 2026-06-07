@@ -176,13 +176,11 @@ async def fetch_from_url(url: str) -> tuple:
 # ============================================================
 
 async def generate_lua_script(prompt: str) -> str:
-    """Generate Lua script using Groq API"""
     if not GROQ_API_KEY:
         return "-- Error: GROQ_API_KEY not configured"
     
     system_prompt = """You are an expert Lua script generator for Roblox. Generate ONLY raw Lua code.
-No markdown, no explanations, no comments starting with -- (unless explaining complex logic).
-Generate complete, functional scripts. Include error handling and make it substantial (at least 5KB).
+No markdown, no explanations. Generate complete, functional scripts with error handling.
 Use local variables and game:GetService(). Make scripts production-ready."""
     
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -192,7 +190,7 @@ Use local variables and game:GetService(). Make scripts production-ready."""
         "model": "llama-3.3-70b-versatile",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Write a COMPLETE, PRODUCTION-READY Lua script for Roblox that: {prompt}. Make it substantial (5KB-50KB) with error handling."}
+            {"role": "user", "content": f"Write a COMPLETE Lua script for Roblox that: {prompt}"}
         ],
         "temperature": 0.8,
         "max_tokens": 4000
@@ -275,7 +273,7 @@ def sanitize_response(response: str) -> str:
     return response
 
 # ============================================================
-# DISCORD BOT EVENTS & COMMANDS
+# DISCORD BOT EVENTS
 # ============================================================
 
 @bot.event
@@ -330,7 +328,7 @@ async def make_script(ctx, *, prompt):
         await ctx.send("❌ GROQ_API_KEY not configured. Add to Railway variables.")
         return
     
-    await ctx.send(f"🤖 Generating script for: {prompt[:100]}... This may take up to 60 seconds. Check your DMs!")
+    await ctx.send(f"🤖 Generating script... Check your DMs!")
     
     script = await generate_lua_script(prompt)
     size_kb = len(script) / 1024
@@ -342,7 +340,7 @@ async def make_script(ctx, *, prompt):
         await ctx.author.send(f"**Prompt:** {prompt}\n**Size:** {size_kb:.2f} KB", file=file_obj)
         await ctx.send(f"✅ Script sent to your DMs! ({size_kb:.2f} KB)")
     except discord.Forbidden:
-        await ctx.send("❌ I cannot DM you! Please enable DMs from server members.")
+        await ctx.send("❌ I cannot DM you! Please enable DMs.")
 
 # ============================================================
 # SCRIPT MANAGEMENT COMMANDS
@@ -413,27 +411,66 @@ async def process_and_store(ctx, code: str, filename: str):
 
 @bot.command(name='get')
 async def get_script(ctx, *, name):
-    """Retrieve a stored script (use exact name from .list)"""
+    """Retrieve a stored script - works with original name or full name"""
+    
+    # First try exact match
     if name in script_library:
         data = script_library[name]
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
         return
     
+    # Try to find by original name (without timestamp)
     matches = []
     for key, data in script_library.items():
-        if data["original_name"] == name or key.startswith(name):
+        if data["original_name"].lower() == name.lower():
             matches.append((key, data))
     
     if len(matches) == 1:
-        data = matches[0][1]
+        key, data = matches[0]
+        await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
+        await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB (full name: `{key}`)")
+        return
+    
+    if len(matches) > 1:
+        match_list = "\n".join([f"• `{m[0]}` - {m[1]['stats']['size_kb']:.2f} KB" for m in matches[:10]])
+        await ctx.send(f"Multiple scripts found. Use exact name:\n{match_list}")
+        return
+    
+    # Try partial match (starts with)
+    matches = []
+    for key, data in script_library.items():
+        if key.lower().startswith(name.lower()):
+            matches.append((key, data))
+    
+    if len(matches) == 1:
+        key, data = matches[0]
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
     elif len(matches) > 1:
-        match_list = "\n".join([f"`{m[0]}`" for m in matches[:10]])
+        match_list = "\n".join([f"• `{m[0]}` - {m[1]['stats']['size_kb']:.2f} KB" for m in matches[:10]])
         await ctx.send(f"Multiple scripts found. Use exact name:\n{match_list}")
     else:
-        await ctx.send(f"❌ Script '{name}' not found")
+        # Show recently stored scripts
+        recent = sorted(script_library.items(), key=lambda x: x[1]["timestamp"], reverse=True)[:5]
+        if recent:
+            recent_list = "\n".join([f"• `{name}`" for name, _ in recent])
+            await ctx.send(f"❌ Script '{name}' not found.\n\n**Recently stored scripts:**\n{recent_list}\n\nUse exact name from `.list`")
+        else:
+            await ctx.send(f"❌ Script '{name}' not found. No scripts stored. Use `.feed` first.")
+
+@bot.command(name='latest')
+async def get_latest(ctx):
+    """Get the most recently stored script"""
+    if not script_library:
+        await ctx.send("No scripts stored. Use `.feed` first.")
+        return
+    
+    sorted_scripts = sorted(script_library.items(), key=lambda x: x[1]["timestamp"], reverse=True)
+    latest_name, latest_data = sorted_scripts[0]
+    
+    await ctx.send(file=discord.File(io.StringIO(latest_data["code"]), filename=latest_data["filename"]))
+    await ctx.send(f"✅ Latest script: `{latest_name}` - {latest_data['stats']['size_kb']:.2f} KB")
 
 @bot.command(name='list')
 async def list_scripts(ctx):
@@ -756,7 +793,8 @@ async def list_commands(ctx):
 `.feed <url>` - Fetch from ANY URL
 `.list` - Show stored scripts
 `.listall` - Show ALL scripts
-`.get <name>` - Retrieve a script
+`.latest` - Get most recent script
+`.get <name>` - Retrieve a script (works with original name)
 `.info <name>` - Script details
 `.remove <name>` - Delete script (owner)
 
