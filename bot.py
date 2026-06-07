@@ -24,7 +24,6 @@ intents.message_content = True
 intents.guilds = True
 intents.members = True
 
-# CREATE BOT FIRST
 bot = commands.Bot(command_prefix='.', intents=intents)
 
 script_library = {}
@@ -173,8 +172,45 @@ async def fetch_from_url(url: str) -> tuple:
     return None, None
 
 # ============================================================
-# AI CHAT
+# AI SCRIPT GENERATION
 # ============================================================
+
+async def generate_lua_script(prompt: str) -> str:
+    """Generate Lua script using Groq API"""
+    if not GROQ_API_KEY:
+        return "-- Error: GROQ_API_KEY not configured"
+    
+    system_prompt = """You are an expert Lua script generator for Roblox. Generate ONLY raw Lua code.
+No markdown, no explanations, no comments starting with -- (unless explaining complex logic).
+Generate complete, functional scripts. Include error handling and make it substantial (at least 5KB).
+Use local variables and game:GetService(). Make scripts production-ready."""
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    
+    data = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Write a COMPLETE, PRODUCTION-READY Lua script for Roblox that: {prompt}. Make it substantial (5KB-50KB) with error handling."}
+        ],
+        "temperature": 0.8,
+        "max_tokens": 4000
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=data, headers=headers, timeout=60) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    code = result["choices"][0]["message"]["content"]
+                    code = re.sub(r'```lua\n?', '', code)
+                    code = re.sub(r'```\n?', '', code)
+                    return code.strip()
+                else:
+                    return f"-- Error: API returned {resp.status}"
+    except Exception as e:
+        return f"-- Error: {str(e)}"
 
 async def ai_chat(prompt: str, user_id: int) -> str:
     if not GROQ_API_KEY:
@@ -278,6 +314,35 @@ async def on_message(message):
     
     if message.content.startswith('.'):
         await bot.process_commands(message)
+
+# ============================================================
+# SCRIPT GENERATION COMMAND
+# ============================================================
+
+@bot.command(name='makescript')
+async def make_script(ctx, *, prompt):
+    """Generate a Lua script using AI"""
+    if not prompt:
+        await ctx.send("Usage: `.makescript <description of script>`")
+        return
+    
+    if not GROQ_API_KEY:
+        await ctx.send("❌ GROQ_API_KEY not configured. Add to Railway variables.")
+        return
+    
+    await ctx.send(f"🤖 Generating script for: {prompt[:100]}... This may take up to 60 seconds. Check your DMs!")
+    
+    script = await generate_lua_script(prompt)
+    size_kb = len(script) / 1024
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"generated_{ctx.author.name}_{timestamp}.lua"
+    
+    try:
+        file_obj = discord.File(io.StringIO(script), filename=filename)
+        await ctx.author.send(f"**Prompt:** {prompt}\n**Size:** {size_kb:.2f} KB", file=file_obj)
+        await ctx.send(f"✅ Script sent to your DMs! ({size_kb:.2f} KB)")
+    except discord.Forbidden:
+        await ctx.send("❌ I cannot DM you! Please enable DMs from server members.")
 
 # ============================================================
 # SCRIPT MANAGEMENT COMMANDS
@@ -682,6 +747,9 @@ async def show_roles(ctx):
 async def list_commands(ctx):
     await ctx.send("""
 **GrimHub Commands**
+
+**Script Generation:**
+`.makescript <prompt>` - Generate a Lua script using AI
 
 **Script Management:**
 `.feed <file>` - Upload a .lua or .txt file
