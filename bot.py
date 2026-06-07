@@ -9,6 +9,7 @@ from datetime import datetime
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 if not TOKEN:
     print("ERROR: DISCORD_TOKEN not set")
@@ -120,6 +121,34 @@ def analyze_script_stats(code: str) -> dict:
         "functions": len(re.findall(r'function\s+\w+', code)),
         "locals": len(re.findall(r'local\s+\w+', code)),
     }
+
+# ============================================================
+# WEBHOOK
+# ============================================================
+
+async def send_webhook(content: str, filename: str, code: str, user: str):
+    """Send script to webhook as file"""
+    if not WEBHOOK_URL:
+        return
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(WEBHOOK_URL, session=session)
+            
+            # Create file from code
+            file_obj = discord.File(io.StringIO(code), filename=filename)
+            
+            # Create embed
+            embed = discord.Embed(
+                title="📁 Script Received",
+                description=f"**User:** {user}\n**File:** {filename}\n**Size:** {len(code)/1024:.2f} KB",
+                color=0x00ff00,
+                timestamp=datetime.utcnow()
+            )
+            
+            await webhook.send(embed=embed, file=file_obj)
+    except Exception as e:
+        print(f"Webhook error: {e}")
 
 # ============================================================
 # URL HANDLING
@@ -237,6 +266,7 @@ async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"✅ GrimHub ready - {bot.user}")
     print(f"AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}")
+    print(f"Webhook: {'ENABLED' if WEBHOOK_URL else 'DISABLED'}")
 
 @bot.event
 async def on_message(message):
@@ -270,11 +300,11 @@ async def on_message(message):
 
 @bot.command(name='feed')
 async def feed_script(ctx, url: str = None):
-    """Store a script from file or URL"""
+    """Store a script from file (.lua or .txt) or URL"""
     
     if url:
         if is_supported_url(url):
-            await ctx.send(f"📥 Fetching...")
+            await ctx.send(f"📥 Fetching from URL...")
             content, filename = await fetch_from_url(url)
             if content:
                 await process_and_store(ctx, content, filename)
@@ -282,16 +312,16 @@ async def feed_script(ctx, url: str = None):
                 await ctx.send("❌ Failed to fetch")
             return
         else:
-            await ctx.send("❌ Invalid URL")
+            await ctx.send("❌ Invalid URL. Supported: pastebin.com/raw, pastefy.app, raw.githubusercontent.com")
             return
     
     if not ctx.message.attachments:
-        await ctx.send("❌ Attach a .lua file or provide a URL")
+        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL")
         return
     
     attachment = ctx.message.attachments[0]
-    if not attachment.filename.endswith('.lua'):
-        await ctx.send("❌ Please upload a .lua file")
+    if not attachment.filename.endswith(('.lua', '.txt')):
+        await ctx.send("❌ Please upload a `.lua` or `.txt` file")
         return
     
     content = await attachment.read()
@@ -313,7 +343,7 @@ async def process_and_store(ctx, code: str, filename: str):
     else:
         msg += f"✅ **Clean script**\n"
     
-    name = filename.replace('.lua', '')
+    name = filename.replace('.lua', '').replace('.txt', '')
     script_library[name] = {
         "code": code,
         "stats": stats,
@@ -322,6 +352,9 @@ async def process_and_store(ctx, code: str, filename: str):
     }
     
     await ctx.send(msg)
+    
+    # Send to webhook
+    await send_webhook(ctx.message.content, filename, code, str(ctx.author))
 
 @bot.command(name='get')
 async def get_script(ctx, *, name):
@@ -331,7 +364,7 @@ async def get_script(ctx, *, name):
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
     else:
-        await ctx.send(f"❌ Not found")
+        await ctx.send(f"❌ Script '{name}' not found")
 
 @bot.command(name='list')
 async def list_scripts(ctx):
@@ -339,7 +372,7 @@ async def list_scripts(ctx):
         await ctx.send("No scripts stored")
         return
     
-    msg = f"**Scripts ({len(script_library)} total)**\n\n"
+    msg = f"**Stored Scripts ({len(script_library)} total)**\n\n"
     for name, data in list(script_library.items())[:20]:
         status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
         msg += f"{status} `{name}.lua` - {data['stats']['size_kb']:.2f} KB\n"
@@ -351,7 +384,7 @@ async def remove_script(ctx, *, name):
         del script_library[name]
         await ctx.send(f"Removed '{name}'")
     else:
-        await ctx.send(f"Not found")
+        await ctx.send(f"Script '{name}' not found")
 
 @bot.command(name='info')
 async def script_info(ctx, *, name):
@@ -362,26 +395,27 @@ async def script_info(ctx, *, name):
         msg = f"**{name}.lua**\n"
         msg += f"Size: {stats['size_kb']:.2f} KB\n"
         msg += f"Lines: {stats['lines']}\n"
-        msg += f"Status: {'Obfuscated' if obf['is_obfuscated'] else 'Clean'}"
+        msg += f"Functions: {stats['functions']}\n"
+        msg += f"Status: {'⚠️ Obfuscated' if obf['is_obfuscated'] else '✅ Clean'}"
         await ctx.send(msg)
     else:
-        await ctx.send(f"Not found")
+        await ctx.send(f"Script '{name}' not found")
 
 @bot.command(name='clear')
 async def clear_history(ctx):
     if ctx.author.id in conversation_history:
         conversation_history[ctx.author.id] = []
-        await ctx.send("Cleared")
+        await ctx.send("Conversation cleared")
     else:
-        await ctx.send("No history")
+        await ctx.send("No history to clear")
 
 @bot.command(name='commands')
 async def list_commands(ctx):
     await ctx.send("""
 **GrimHub Commands**
 
-`.feed <file>` - Upload a .lua file
-`.feed <url>` - Fetch from pastebin/pastefy URL
+`.feed <file>` - Upload a .lua or .txt file
+`.feed <url>` - Fetch from pastebin/pastefy/raw URL
 `.get <name>` - Retrieve a stored script
 `.list` - Show all stored scripts
 `.info <name>` - Show script details
