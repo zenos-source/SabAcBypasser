@@ -74,7 +74,7 @@ User request: {prompt}"""
 async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"GrimHub Bot ready - {bot.user}")
-    print("Commands: .makescript, .feed, .history, .help")
+    print("Commands: .makescript, .feed, .history, .commands")
 
 @bot.event
 async def on_message(message):
@@ -86,7 +86,7 @@ async def on_message(message):
         return
     
     if bot.user in message.mentions:
-        await message.reply(f"Hello {message.author.name}! Use `.makescript <prompt>` to generate a script, or `.help` for commands.")
+        await message.reply(f"Hello {message.author.name}! Use `.makescript <prompt>` to generate a script, or `.commands` for help.")
         return
     
     await bot.process_commands(message)
@@ -177,17 +177,17 @@ async def script_history(ctx):
     
     await ctx.send(message)
 
-@bot.command(name='help')
-async def help_command(ctx):
+@bot.command(name='commands')
+async def list_commands(ctx):
     embed = discord.Embed(
-        title="GrimHub Bot",
+        title="GrimHub Bot Commands",
         description="Lua script generator with AI learning",
         color=0x00ff00
     )
     embed.add_field(name="`.makescript <prompt>`", value="Generate a Lua script", inline=False)
     embed.add_field(name="`.feed` (with .lua file)", value="Feed a script to the AI for learning", inline=False)
     embed.add_field(name="`.history`", value="View your script history", inline=False)
-    embed.add_field(name="`.help`", value="Show this help", inline=False)
+    embed.add_field(name="`.commands`", value="Show this help", inline=False)
     embed.set_footer(text="Scripts are generated using Groq AI with your fed scripts as context")
     
     await ctx.send(embed=embed)
