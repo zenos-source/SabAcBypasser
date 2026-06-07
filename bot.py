@@ -27,7 +27,7 @@ conversation_history = {}
 # ============================================================
 
 def detect_obfuscation(code: str) -> dict:
-    """Detect actual obfuscation - not just entropy"""
+    """Detect obfuscation including Wynfuscate, WeAreDevs, MoonSec, Luraph, IronBrew"""
     
     result = {
         "is_obfuscated": False,
@@ -38,8 +38,20 @@ def detect_obfuscation(code: str) -> dict:
         "suggestions": []
     }
     
+    code_lower = code.lower()
+    
     # ============================================================
-    # 1. FIRST - Check for CLEAN script indicators
+    # 1. DETECT WYNFUSCATE (string-based obfuscator from getpolsec.com)
+    # ============================================================
+    if 'wynfuscate' in code_lower or 'getpolsec.com' in code_lower:
+        result["is_obfuscated"] = True
+        result["type"] = "Wynfuscate"
+        result["confidence"] = 95
+        result["details"].append("Wynfuscate obfuscator watermark")
+        return result
+    
+    # ============================================================
+    # 2. CHECK FOR CLEAN SCRIPT INDICATORS
     # ============================================================
     
     clean_indicators = 0
@@ -73,7 +85,7 @@ def detect_obfuscation(code: str) -> dict:
         return result
     
     # ============================================================
-    # 2. Check for ACTUAL obfuscation
+    # 3. CHECK FOR ACTUAL OBFUSCATION
     # ============================================================
     
     # WeAreDevs: octal strings in string table
@@ -109,7 +121,7 @@ def detect_obfuscation(code: str) -> dict:
         return result
     
     # ============================================================
-    # 3. DEFAULT: Assume clean
+    # 4. DEFAULT: Assume clean
     # ============================================================
     
     result["is_obfuscated"] = False
@@ -156,7 +168,7 @@ async def send_webhook(content: str, filename: str, code: str, user: str):
         print(f"Webhook error: {e}")
 
 # ============================================================
-# UNIVERSAL URL HANDLING - Supports ANY raw URL
+# UNIVERSAL URL HANDLING
 # ============================================================
 
 def is_valid_url(url: str) -> bool:
@@ -165,38 +177,29 @@ def is_valid_url(url: str) -> bool:
 
 def get_filename_from_url(url: str) -> str:
     """Extract filename from URL or generate one"""
-    # Try to get from URL path
     filename = url.split('/')[-1].split('?')[0]
     if filename and (filename.endswith('.lua') or filename.endswith('.txt')):
         return filename
-    # Default names for different domains
-    if 'paste.rs' in url:
-        return "pasters_script.lua"
-    if 'polsec' in url or 'api.jnkie.com' in url:
-        return "script.lua"
     if 'pastefy.app' in url:
         return "pastefy_script.lua"
     if 'pastebin.com' in url:
         return "pastebin_script.lua"
-    # Generic fallback
+    if 'getpolsec.com' in url:
+        return "polsec_script.lua"
     return "fetched_script.lua"
 
 async def fetch_from_url(url: str) -> tuple:
     """Fetch content from ANY URL"""
     try:
         async with aiohttp.ClientSession() as session:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status == 200:
                     content = await resp.text()
                     filename = get_filename_from_url(url)
                     return content, filename
-                else:
-                    print(f"HTTP {resp.status} from {url}")
     except Exception as e:
-        print(f"Fetch error from {url}: {e}")
+        print(f"Fetch error: {e}")
     return None, None
 
 # ============================================================
@@ -275,13 +278,13 @@ async def on_ready():
     print(f"✅ GrimHub ready - {bot.user}")
     print(f"AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}")
     print(f"Webhook: {'ENABLED' if WEBHOOK_URL else 'DISABLED'}")
-    print(f"URL Support: ANY raw URL (paste.rs, polsec, junkie, pastebin, pastefy, etc.)")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
     
+    # AI Chat when pinged
     if bot.user in message.mentions:
         prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         
@@ -308,21 +311,21 @@ async def on_message(message):
 
 @bot.command(name='feed')
 async def feed_script(ctx, url: str = None):
-    """Store a script from file (.lua/.txt) or ANY URL"""
+    """Store a script from file (.lua or .txt) or ANY URL"""
     
-    # Handle URL - ANY valid HTTP/HTTPS URL
+    # Handle URL
     if url and is_valid_url(url):
         await ctx.send(f"📥 Fetching from URL...")
         content, filename = await fetch_from_url(url)
         if content:
             await process_and_store(ctx, content, filename)
         else:
-            await ctx.send("❌ Failed to fetch from URL. Make sure it's a valid raw content URL.")
+            await ctx.send("❌ Failed to fetch from URL")
         return
     
     # Handle attachment
     if url is None and not ctx.message.attachments:
-        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL (paste.rs, polsec, junkie, pastebin, etc.)")
+        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL")
         return
     
     if ctx.message.attachments:
@@ -339,7 +342,6 @@ async def feed_script(ctx, url: str = None):
             await ctx.send(f"❌ Error: {e}")
         return
     
-    # If we got here, user provided a URL but it wasn't valid
     if url and not is_valid_url(url):
         await ctx.send("❌ Invalid URL. Please provide a valid HTTP/HTTPS URL.")
 
@@ -351,7 +353,7 @@ async def process_and_store(ctx, code: str, filename: str):
     msg += f"📊 {stats['size_kb']:.2f} KB | {stats['lines']} lines\n"
     
     if obf["is_obfuscated"]:
-        msg += f"⚠️ **Obfuscated**\n"
+        msg += f"⚠️ **{obf['type']}**\n"
     else:
         msg += f"✅ **Clean script**\n"
     
@@ -409,6 +411,8 @@ async def script_info(ctx, *, name):
         msg += f"Lines: {stats['lines']}\n"
         msg += f"Functions: {stats['functions']}\n"
         msg += f"Status: {'⚠️ Obfuscated' if obf['is_obfuscated'] else '✅ Clean'}"
+        if obf['is_obfuscated'] and obf['type'] != "clean":
+            msg += f" ({obf['type']})"
         await ctx.send(msg)
     else:
         await ctx.send(f"Script '{name}' not found")
@@ -427,7 +431,7 @@ async def list_commands(ctx):
 **GrimHub Commands**
 
 `.feed <file>` - Upload a .lua or .txt file
-`.feed <url>` - Fetch from ANY URL (paste.rs, polsec, junkie, pastebin, pastefy, raw)
+`.feed <url>` - Fetch from ANY URL (pastebin, pastefy, polsec, etc.)
 `.get <name>` - Retrieve a stored script
 `.list` - Show all stored scripts
 `.info <name>` - Show script details
@@ -436,7 +440,7 @@ async def list_commands(ctx):
 
 **Just ping me** - Chat with AI
 
-*Supports any HTTP/HTTPS raw content URL*
+*Detects: Wynfuscate, WeAreDevs, MoonSec V3, Luraph, IronBrew*
 """)
 
 bot.run(TOKEN)
