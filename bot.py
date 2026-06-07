@@ -19,6 +19,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='.', intents=intents)
 
+# Global storage - ALL scripts from ALL users
 script_library = {}
 conversation_history = {}
 
@@ -40,9 +41,7 @@ def detect_obfuscation(code: str) -> dict:
     
     code_lower = code.lower()
     
-    # ============================================================
-    # 1. DETECT WYNFUSCATE (string-based obfuscator from getpolsec.com)
-    # ============================================================
+    # Wynfuscate detection
     if 'wynfuscate' in code_lower or 'getpolsec.com' in code_lower:
         result["is_obfuscated"] = True
         result["type"] = "Wynfuscate"
@@ -50,33 +49,20 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Wynfuscate obfuscator watermark")
         return result
     
-    # ============================================================
-    # 2. CHECK FOR CLEAN SCRIPT INDICATORS
-    # ============================================================
-    
+    # Check for clean script indicators
     clean_indicators = 0
     
-    # Proper Roblox API usage
     if re.search(r'game:GetService\(["\'](TweenService|Players|RunService|ReplicatedStorage)["\']\)', code):
         clean_indicators += 1
-    
-    # Proper function definitions with readable names
     if re.search(r'function\s+[A-Za-z][A-Za-z0-9_]+\s*\([^)]*\)', code):
         clean_indicators += 1
-    
-    # Comments explaining code
     if re.search(r'--\[\[.*?\]\]|--\s+[A-Za-z]', code, re.DOTALL):
         clean_indicators += 1
-    
-    # Proper local variable declarations
     if re.search(r'local\s+[A-Za-z][A-Za-z0-9_]+\s*=\s*game:', code):
         clean_indicators += 1
-    
-    # Indentation (tabs or spaces)
     if re.search(r'\n\t+local|\n  local', code):
         clean_indicators += 1
     
-    # If it has 3+ clean indicators, it's CLEAN source code
     if clean_indicators >= 3:
         result["is_obfuscated"] = False
         result["type"] = "clean"
@@ -84,11 +70,7 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Readable source code")
         return result
     
-    # ============================================================
-    # 3. CHECK FOR ACTUAL OBFUSCATION
-    # ============================================================
-    
-    # WeAreDevs: octal strings in string table
+    # Actual obfuscation
     if re.search(r'local d = \{\\d{3}', code):
         result["is_obfuscated"] = True
         result["type"] = "WeAreDevs"
@@ -96,7 +78,6 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Octal encoded strings")
         return result
     
-    # MoonSec V3: VM wrapper pattern
     if re.search(r'return\(\s*function\s*\([^)]*\)\s*local\s+[a-z]+\s*=\s*\{[^}]*\}\s*local\s+function', code, re.DOTALL):
         result["is_obfuscated"] = True
         result["type"] = "MoonSec V3"
@@ -104,7 +85,6 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("VM wrapper detected")
         return result
     
-    # Luraph: specific loader pattern
     if re.search(r'Luraph.*loadstring\(game:HttpGet', code, re.IGNORECASE):
         result["is_obfuscated"] = True
         result["type"] = "Luraph"
@@ -112,17 +92,12 @@ def detect_obfuscation(code: str) -> dict:
         result["details"].append("Luraph loader pattern")
         return result
     
-    # IronBrew: numeric string table (only if no clean indicators)
     if re.search(r'local\s+d\s*=\s*\{[\d,\s]+\}', code) and clean_indicators < 2:
         result["is_obfuscated"] = True
         result["type"] = "IronBrew"
         result["confidence"] = 85
         result["details"].append("Numeric string table")
         return result
-    
-    # ============================================================
-    # 4. DEFAULT: Assume clean
-    # ============================================================
     
     result["is_obfuscated"] = False
     result["type"] = "clean"
@@ -168,15 +143,13 @@ async def send_webhook(content: str, filename: str, code: str, user: str):
         print(f"Webhook error: {e}")
 
 # ============================================================
-# UNIVERSAL URL HANDLING
+# URL HANDLING
 # ============================================================
 
 def is_valid_url(url: str) -> bool:
-    """Check if string looks like a URL"""
     return url.startswith('http://') or url.startswith('https://')
 
 def get_filename_from_url(url: str) -> str:
-    """Extract filename from URL or generate one"""
     filename = url.split('/')[-1].split('?')[0]
     if filename and (filename.endswith('.lua') or filename.endswith('.txt')):
         return filename
@@ -189,7 +162,6 @@ def get_filename_from_url(url: str) -> str:
     return "fetched_script.lua"
 
 async def fetch_from_url(url: str) -> tuple:
-    """Fetch content from ANY URL"""
     try:
         async with aiohttp.ClientSession() as session:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -284,7 +256,6 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # AI Chat when pinged
     if bot.user in message.mentions:
         prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         
@@ -313,7 +284,6 @@ async def on_message(message):
 async def feed_script(ctx, url: str = None):
     """Store a script from file (.lua or .txt) or ANY URL"""
     
-    # Handle URL
     if url and is_valid_url(url):
         await ctx.send(f"📥 Fetching from URL...")
         content, filename = await fetch_from_url(url)
@@ -323,7 +293,6 @@ async def feed_script(ctx, url: str = None):
             await ctx.send("❌ Failed to fetch from URL")
         return
     
-    # Handle attachment
     if url is None and not ctx.message.attachments:
         await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL")
         return
@@ -349,6 +318,11 @@ async def process_and_store(ctx, code: str, filename: str):
     obf = detect_obfuscation(code)
     stats = analyze_script_stats(code)
     
+    # Generate unique name with timestamp to avoid overwriting
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = filename.replace('.lua', '').replace('.txt', '')
+    unique_name = f"{name}_{timestamp}"
+    
     msg = f"**📁 {filename}**\n"
     msg += f"📊 {stats['size_kb']:.2f} KB | {stats['lines']} lines\n"
     
@@ -357,12 +331,15 @@ async def process_and_store(ctx, code: str, filename: str):
     else:
         msg += f"✅ **Clean script**\n"
     
-    name = filename.replace('.lua', '').replace('.txt', '')
-    script_library[name] = {
+    # Store in GLOBAL library with unique name
+    script_library[unique_name] = {
         "code": code,
         "stats": stats,
         "obfuscation": obf,
-        "filename": filename
+        "filename": filename,
+        "original_name": name,
+        "uploaded_by": str(ctx.author),
+        "timestamp": timestamp
     }
     
     await ctx.send(msg)
@@ -372,41 +349,105 @@ async def process_and_store(ctx, code: str, filename: str):
 
 @bot.command(name='get')
 async def get_script(ctx, *, name):
-    """Retrieve a stored script"""
+    """Retrieve a stored script (use exact name from .list)"""
+    # Try exact match first
     if name in script_library:
         data = script_library[name]
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
+        return
+    
+    # Try partial match (find by original name without timestamp)
+    matches = []
+    for key, data in script_library.items():
+        if data["original_name"] == name or key.startswith(name):
+            matches.append((key, data))
+    
+    if len(matches) == 1:
+        data = matches[0][1]
+        await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
+        await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
+    elif len(matches) > 1:
+        match_list = "\n".join([f"`{m[0]}`" for m in matches[:10]])
+        await ctx.send(f"Multiple scripts found. Use exact name:\n{match_list}")
     else:
         await ctx.send(f"❌ Script '{name}' not found")
 
 @bot.command(name='list')
 async def list_scripts(ctx):
+    """Show ALL stored scripts from all users"""
     if not script_library:
-        await ctx.send("No scripts stored")
+        await ctx.send("No scripts stored. Use `.feed` to add some.")
         return
     
-    msg = f"**Stored Scripts ({len(script_library)} total)**\n\n"
-    for name, data in list(script_library.items())[:20]:
+    # Sort by timestamp (newest first)
+    sorted_scripts = sorted(script_library.items(), key=lambda x: x[1]["timestamp"], reverse=True)
+    
+    msg = f"**📚 Stored Scripts ({len(script_library)} total)**\n\n"
+    
+    for name, data in sorted_scripts[:25]:  # Show up to 25
         status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
-        msg += f"{status} `{name}.lua` - {data['stats']['size_kb']:.2f} KB\n"
-    await ctx.send(msg)
+        obf_type = f" [{data['obfuscation']['type']}]" if data["obfuscation"]["is_obfuscated"] else ""
+        msg += f"{status} `{name}` - {data['stats']['size_kb']:.2f} KB{obf_type}\n"
+        msg += f"   📤 by: {data['uploaded_by']} | 📅 {data['timestamp']}\n"
+    
+    if len(sorted_scripts) > 25:
+        msg += f"\n*... and {len(sorted_scripts) - 25} more. Use `.listall` to see everything.*"
+    
+    # Split into multiple messages if too long
+    if len(msg) > 1900:
+        for i in range(0, len(msg), 1900):
+            await ctx.send(msg[i:i+1900])
+    else:
+        await ctx.send(msg)
+
+@bot.command(name='listall')
+async def list_all_scripts(ctx):
+    """Show ALL stored scripts (full list)"""
+    if not script_library:
+        await ctx.send("No scripts stored.")
+        return
+    
+    sorted_scripts = sorted(script_library.items(), key=lambda x: x[1]["timestamp"], reverse=True)
+    
+    msg = f"**📚 ALL Stored Scripts ({len(script_library)} total)**\n\n"
+    
+    for name, data in sorted_scripts:
+        status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
+        msg += f"{status} `{name}` - {data['stats']['size_kb']:.2f} KB (by {data['uploaded_by']})\n"
+    
+    # Split into multiple messages
+    if len(msg) > 1900:
+        for i in range(0, len(msg), 1900):
+            await ctx.send(msg[i:i+1900])
+    else:
+        await ctx.send(msg)
 
 @bot.command(name='remove')
 async def remove_script(ctx, *, name):
+    """Remove a stored script (owner or admin only)"""
     if name in script_library:
-        del script_library[name]
-        await ctx.send(f"Removed '{name}'")
+        data = script_library[name]
+        # Check if user is the uploader or has admin perms
+        if str(ctx.author) == data["uploaded_by"] or ctx.author.guild_permissions.administrator:
+            del script_library[name]
+            await ctx.send(f"✅ Removed '{name}'")
+        else:
+            await ctx.send(f"❌ You can only remove scripts you uploaded. (Uploaded by: {data['uploaded_by']})")
     else:
-        await ctx.send(f"Script '{name}' not found")
+        await ctx.send(f"❌ Script '{name}' not found")
 
 @bot.command(name='info')
 async def script_info(ctx, *, name):
+    """Show detailed info about a stored script"""
     if name in script_library:
         data = script_library[name]
         stats = data["stats"]
         obf = data["obfuscation"]
-        msg = f"**{name}.lua**\n"
+        msg = f"**📄 {name}**\n"
+        msg += f"Original file: {data['filename']}\n"
+        msg += f"Uploaded by: {data['uploaded_by']}\n"
+        msg += f"Timestamp: {data['timestamp']}\n"
         msg += f"Size: {stats['size_kb']:.2f} KB\n"
         msg += f"Lines: {stats['lines']}\n"
         msg += f"Functions: {stats['functions']}\n"
@@ -415,7 +456,7 @@ async def script_info(ctx, *, name):
             msg += f" ({obf['type']})"
         await ctx.send(msg)
     else:
-        await ctx.send(f"Script '{name}' not found")
+        await ctx.send(f"❌ Script '{name}' not found")
 
 @bot.command(name='clear')
 async def clear_history(ctx):
@@ -432,10 +473,11 @@ async def list_commands(ctx):
 
 `.feed <file>` - Upload a .lua or .txt file
 `.feed <url>` - Fetch from ANY URL (pastebin, pastefy, polsec, etc.)
+`.list` - Show ALL stored scripts (25 newest)
+`.listall` - Show ALL stored scripts (complete list)
 `.get <name>` - Retrieve a stored script
-`.list` - Show all stored scripts
 `.info <name>` - Show script details
-`.remove <name>` - Delete a script
+`.remove <name>` - Delete a script (owner or admin)
 `.clear` - Clear AI conversation history
 
 **Just ping me** - Chat with AI
