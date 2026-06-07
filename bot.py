@@ -142,10 +142,8 @@ async def send_webhook(content: str, filename: str, code: str, user: str):
         async with aiohttp.ClientSession() as session:
             webhook = discord.Webhook.from_url(WEBHOOK_URL, session=session)
             
-            # Create file from code
             file_obj = discord.File(io.StringIO(code), filename=filename)
             
-            # Create embed
             embed = discord.Embed(
                 title="📁 Script Received",
                 description=f"**User:** {user}\n**File:** {filename}\n**Size:** {len(code)/1024:.2f} KB",
@@ -158,44 +156,47 @@ async def send_webhook(content: str, filename: str, code: str, user: str):
         print(f"Webhook error: {e}")
 
 # ============================================================
-# URL HANDLING
+# UNIVERSAL URL HANDLING - Supports ANY raw URL
 # ============================================================
 
-def is_supported_url(url: str) -> bool:
-    url_lower = url.lower()
-    return any(x in url_lower for x in [
-        'pastebin.com/raw',
-        'pastefy.app',
-        'raw.githubusercontent.com',
-        'gist.githubusercontent.com',
-        'raw.'
-    ])
+def is_valid_url(url: str) -> bool:
+    """Check if string looks like a URL"""
+    return url.startswith('http://') or url.startswith('https://')
 
-def extract_raw_url(url: str) -> str:
-    if '/raw' in url:
-        return url
+def get_filename_from_url(url: str) -> str:
+    """Extract filename from URL or generate one"""
+    # Try to get from URL path
+    filename = url.split('/')[-1].split('?')[0]
+    if filename and (filename.endswith('.lua') or filename.endswith('.txt')):
+        return filename
+    # Default names for different domains
+    if 'paste.rs' in url:
+        return "pasters_script.lua"
+    if 'polsec' in url or 'api.jnkie.com' in url:
+        return "script.lua"
     if 'pastefy.app' in url:
-        if not url.endswith('/raw'):
-            if url.endswith('/'):
-                return url + 'raw'
-            return url + '/raw'
-    if 'pastebin.com' in url and '/raw' not in url:
-        url = url.replace('pastebin.com', 'pastebin.com/raw')
-    return url
+        return "pastefy_script.lua"
+    if 'pastebin.com' in url:
+        return "pastebin_script.lua"
+    # Generic fallback
+    return "fetched_script.lua"
 
 async def fetch_from_url(url: str) -> tuple:
-    raw_url = extract_raw_url(url)
+    """Fetch content from ANY URL"""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(raw_url, timeout=30) as resp:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status == 200:
                     content = await resp.text()
-                    filename = raw_url.split('/')[-1].split('?')[0]
-                    if not filename.endswith(('.lua', '.txt')):
-                        filename = "script.lua"
+                    filename = get_filename_from_url(url)
                     return content, filename
+                else:
+                    print(f"HTTP {resp.status} from {url}")
     except Exception as e:
-        print(f"Fetch error: {e}")
+        print(f"Fetch error from {url}: {e}")
     return None, None
 
 # ============================================================
@@ -274,13 +275,13 @@ async def on_ready():
     print(f"✅ GrimHub ready - {bot.user}")
     print(f"AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}")
     print(f"Webhook: {'ENABLED' if WEBHOOK_URL else 'DISABLED'}")
+    print(f"URL Support: ANY raw URL (paste.rs, polsec, junkie, pastebin, pastefy, etc.)")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
     
-    # AI Chat when pinged
     if bot.user in message.mentions:
         prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         
@@ -307,36 +308,40 @@ async def on_message(message):
 
 @bot.command(name='feed')
 async def feed_script(ctx, url: str = None):
-    """Store a script from file (.lua or .txt) or URL"""
+    """Store a script from file (.lua/.txt) or ANY URL"""
     
-    if url:
-        if is_supported_url(url):
-            await ctx.send(f"📥 Fetching from URL...")
-            content, filename = await fetch_from_url(url)
-            if content:
-                await process_and_store(ctx, content, filename)
-            else:
-                await ctx.send("❌ Failed to fetch")
-            return
+    # Handle URL - ANY valid HTTP/HTTPS URL
+    if url and is_valid_url(url):
+        await ctx.send(f"📥 Fetching from URL...")
+        content, filename = await fetch_from_url(url)
+        if content:
+            await process_and_store(ctx, content, filename)
         else:
-            await ctx.send("❌ Invalid URL. Supported: pastebin.com/raw, pastefy.app, raw.githubusercontent.com")
+            await ctx.send("❌ Failed to fetch from URL. Make sure it's a valid raw content URL.")
+        return
+    
+    # Handle attachment
+    if url is None and not ctx.message.attachments:
+        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL (paste.rs, polsec, junkie, pastebin, etc.)")
+        return
+    
+    if ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+        if not attachment.filename.endswith(('.lua', '.txt')):
+            await ctx.send("❌ Please upload a `.lua` or `.txt` file")
             return
-    
-    if not ctx.message.attachments:
-        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL")
+        
+        content = await attachment.read()
+        try:
+            code = content.decode('utf-8')
+            await process_and_store(ctx, code, attachment.filename)
+        except Exception as e:
+            await ctx.send(f"❌ Error: {e}")
         return
     
-    attachment = ctx.message.attachments[0]
-    if not attachment.filename.endswith(('.lua', '.txt')):
-        await ctx.send("❌ Please upload a `.lua` or `.txt` file")
-        return
-    
-    content = await attachment.read()
-    try:
-        code = content.decode('utf-8')
-        await process_and_store(ctx, code, attachment.filename)
-    except Exception as e:
-        await ctx.send(f"❌ Error: {e}")
+    # If we got here, user provided a URL but it wasn't valid
+    if url and not is_valid_url(url):
+        await ctx.send("❌ Invalid URL. Please provide a valid HTTP/HTTPS URL.")
 
 async def process_and_store(ctx, code: str, filename: str):
     obf = detect_obfuscation(code)
@@ -422,7 +427,7 @@ async def list_commands(ctx):
 **GrimHub Commands**
 
 `.feed <file>` - Upload a .lua or .txt file
-`.feed <url>` - Fetch from pastebin/pastefy/raw URL
+`.feed <url>` - Fetch from ANY URL (paste.rs, polsec, junkie, pastebin, pastefy, raw)
 `.get <name>` - Retrieve a stored script
 `.list` - Show all stored scripts
 `.info <name>` - Show script details
@@ -430,6 +435,8 @@ async def list_commands(ctx):
 `.clear` - Clear AI conversation history
 
 **Just ping me** - Chat with AI
+
+*Supports any HTTP/HTTPS raw content URL*
 """)
 
 bot.run(TOKEN)
