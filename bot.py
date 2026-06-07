@@ -4,7 +4,7 @@ import asyncio
 import time
 
 # ========== CONFIGURATION ==========
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ID = 1088143400496279552  # Your Discord ID
 
 intents = discord.Intents.all()
