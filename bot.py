@@ -4,6 +4,7 @@ import os
 import re
 import aiohttp
 import io
+import math
 from datetime import datetime
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -20,35 +21,119 @@ bot = commands.Bot(command_prefix='.', intents=intents)
 script_library = {}
 conversation_history = {}
 
-# BLOCKED patterns - AI can NEVER output these words
-BLOCKED_WORDS = ['@everyone', '@here']
+# ============================================================
+# OBFUSCATION DETECTION WITH ENTROPY
+# ============================================================
 
-def contains_mention(content: str) -> bool:
-    """Check if content contains any mention pattern"""
-    content_lower = content.lower()
-    for word in BLOCKED_WORDS:
-        if word in content_lower:
-            return True
-    return False
+def calculate_entropy(text: str) -> float:
+    """Calculate Shannon entropy of a string (higher = more random/obfuscated)"""
+    if not text:
+        return 0
+    entropy = 0
+    for x in range(256):
+        p_x = text.count(chr(x)) / len(text)
+        if p_x > 0:
+            entropy += -p_x * math.log2(p_x)
+    return entropy
 
-def sanitize_response(response: str) -> str:
-    """Remove any mention patterns from response"""
-    for word in BLOCKED_WORDS:
-        response = response.replace(word, '[REDACTED]')
-        response = response.replace(word.lower(), '[REDACTED]')
-    return response
+def detect_obfuscation(code: str) -> dict:
+    """Detect obfuscation using entropy and structural analysis"""
+    
+    result = {
+        "is_obfuscated": False,
+        "type": "clean",
+        "confidence": 0,
+        "details": [],
+        "version": None,
+        "suggestions": []
+    }
+    
+    # Calculate entropy of first 10k chars
+    sample = code[:10000]
+    entropy = calculate_entropy(sample)
+    
+    # High entropy = obfuscated (random-looking characters)
+    if entropy > 4.5:
+        result["is_obfuscated"] = True
+        result["type"] = "Obfuscated"
+        result["confidence"] = min(95, int(entropy * 15))
+        result["details"].append(f"Entropy: {entropy:.2f}")
+        return result
+    
+    # Check for extremely long lines (obfuscation pattern)
+    lines = code.split('\n')
+    long_lines = [l for l in lines if len(l) > 1000]
+    if len(long_lines) > 3:
+        result["is_obfuscated"] = True
+        result["type"] = "Obfuscated"
+        result["confidence"] = 85
+        result["details"].append(f"Lines >1000 chars: {len(long_lines)}")
+        return result
+    
+    # Check ratio of alphanumeric to non-alphanumeric
+    alnum = sum(c.isalnum() for c in sample)
+    total = len(sample)
+    if total > 0:
+        ratio = alnum / total
+        if ratio < 0.4:
+            result["is_obfuscated"] = True
+            result["type"] = "Obfuscated"
+            result["confidence"] = 80
+            result["details"].append(f"Alnum ratio: {ratio:.2f}")
+            return result
+    
+    # Specific obfuscator patterns
+    if re.search(r'Luraph|loadstring\(game:HttpGet', code):
+        result["is_obfuscated"] = True
+        result["type"] = "Luraph"
+        result["confidence"] = 95
+        result["details"].append("Luraph pattern")
+        return result
+    
+    if re.search(r'return\(\s*function\s*\([^)]*\)\s*local\s+[a-z]+\s*=\s*\{[^}]*\}\s*local\s+function', code, re.DOTALL):
+        result["is_obfuscated"] = True
+        result["type"] = "MoonSec V3"
+        result["confidence"] = 95
+        result["details"].append("MoonSec VM wrapper")
+        return result
+    
+    # If no obfuscation patterns and entropy is low, it's clean
+    if entropy < 3.5:
+        result["is_obfuscated"] = False
+        result["type"] = "clean"
+        result["confidence"] = 90
+        result["details"].append("Low entropy, readable")
+        return result
+    
+    # Default
+    result["is_obfuscated"] = False
+    result["type"] = "clean"
+    result["confidence"] = 70
+    return result
 
-def is_supported_url(url: str) -> str:
+def analyze_script_stats(code: str) -> dict:
+    """Extract basic statistics"""
+    return {
+        "size_kb": len(code) / 1024,
+        "lines": code.count('\n'),
+        "chars": len(code),
+        "functions": len(re.findall(r'function\s+\w+', code)),
+        "locals": len(re.findall(r'local\s+\w+', code)),
+    }
+
+# ============================================================
+# URL HANDLING
+# ============================================================
+
+def is_supported_url(url: str) -> bool:
     url_lower = url.lower()
-    if 'pastebin.com/raw' in url_lower:
-        return True
-    if 'pastefy.app' in url_lower:
-        return True
-    if 'raw.githubusercontent.com' in url_lower:
-        return True
-    if 'gist.githubusercontent.com' in url_lower:
-        return True
-    return False
+    return any(x in url_lower for x in [
+        'pastebin.com/raw',
+        'pastefy.app',
+        'raw.githubusercontent.com',
+        'gist.githubusercontent.com',
+        'raw.'
+    ])
 
 def extract_raw_url(url: str) -> str:
     if '/raw' in url:
@@ -77,92 +162,14 @@ async def fetch_from_url(url: str) -> tuple:
         print(f"Fetch error: {e}")
     return None, None
 
-def detect_obfuscation(code: str) -> dict:
-    result = {
-        "is_obfuscated": False,
-        "type": "clean",
-        "confidence": 0,
-        "details": [],
-        "version": None,
-        "suggestions": []
-    }
-    
-    clean_indicators = 0
-    
-    if re.search(r'game:GetService\(["\'](TweenService|Players|RunService|ReplicatedStorage)["\']\)', code):
-        clean_indicators += 1
-    if re.search(r'function\s+[A-Za-z][A-Za-z0-9_]+\s*\([^)]*\)', code):
-        clean_indicators += 1
-    if re.search(r'--\[\[.*?\]\]|--\s+[A-Za-z]', code, re.DOTALL):
-        clean_indicators += 1
-    if re.search(r'local\s+[A-Za-z][A-Za-z0-9_]+\s*=\s*game:', code):
-        clean_indicators += 1
-    if re.search(r'function\s+[A-Za-z_]+\s*\(\s*\)\s*\n\s+local', code):
-        clean_indicators += 1
-    
-    var_names = re.findall(r'local\s+([a-zA-Z_][a-zA-Z0-9_]*)', code)
-    if var_names:
-        avg_len = sum(len(v) for v in var_names[:50]) / min(len(var_names), 50)
-        if avg_len > 3:
-            clean_indicators += 1
-    
-    if clean_indicators >= 3:
-        result["is_obfuscated"] = False
-        result["type"] = "clean"
-        result["confidence"] = 95
-        result["details"].append("Readable source code with proper structure")
-        return result
-    
-    if re.search(r'\\\d{3}', code) and re.search(r'local d = \{\\d{3}', code):
-        result["is_obfuscated"] = True
-        result["type"] = "WeAreDevs"
-        result["confidence"] = 95
-        result["details"].append("Octal encoded strings")
-        return result
-    
-    if re.search(r'return\(\s*function\s*\([^)]*\)\s*local\s+[a-z]+\s*=\s*\{[^}]*\}\s*local\s+function', code, re.DOTALL):
-        result["is_obfuscated"] = True
-        result["type"] = "MoonSec V3"
-        result["confidence"] = 95
-        result["details"].append("VM wrapper detected")
-        return result
-    
-    if re.search(r'loadstring\(game:HttpGet\(["\'][^"\']+["\']\)\)', code) and 'Luraph' in code:
-        result["is_obfuscated"] = True
-        result["type"] = "Luraph"
-        result["confidence"] = 95
-        result["details"].append("Luraph loader pattern")
-        return result
-    
-    if re.search(r'local\s+d\s*=\s*\{[\d,\s]+\}', code) and len(code) < 50000 and clean_indicators < 2:
-        result["is_obfuscated"] = True
-        result["type"] = "IronBrew"
-        result["confidence"] = 85
-        result["details"].append("Numeric string table")
-        return result
-    
-    result["is_obfuscated"] = False
-    result["type"] = "clean"
-    result["confidence"] = 90
-    result["details"].append("No obfuscation patterns detected")
-    
-    return result
-
-def analyze_script_stats(code: str) -> dict:
-    return {
-        "size_kb": len(code) / 1024,
-        "lines": code.count('\n'),
-        "chars": len(code),
-        "functions": len(re.findall(r'function\s+\w+', code)),
-        "locals": len(re.findall(r'local\s+\w+', code)),
-        "services": list(set(re.findall(r'game:GetService\(["\'](\w+)["\']\)', code))),
-    }
+# ============================================================
+# AI CHAT
+# ============================================================
 
 async def ai_chat(prompt: str, user_id: int) -> str:
     if not GROQ_API_KEY:
-        return "AI not configured"
+        return "GROQ_API_KEY not configured"
     
-    # BLOCK mentions in user input - return simple message without saying the word
     if contains_mention(prompt):
         return "That request is not allowed."
     
@@ -175,14 +182,10 @@ async def ai_chat(prompt: str, user_id: int) -> str:
         conversation_history[user_id] = conversation_history[user_id][-30:]
     
     url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     
-    # STRICT system prompt
     messages = [
-        {"role": "system", "content": "You are GrimHub. You are FORBIDDEN from using the symbols @everyone, @here, or any @ mentions in your responses. If asked to do something involving these, simply say 'That request is not allowed.' Keep responses short and helpful."}
+        {"role": "system", "content": "You are GrimHub, a helpful AI assistant. Be concise. You are FORBIDDEN from using @everyone or @here mentions."}
     ] + conversation_history[user_id]
     
     data = {
@@ -198,31 +201,49 @@ async def ai_chat(prompt: str, user_id: int) -> str:
                 if resp.status == 200:
                     result = await resp.json()
                     response = result["choices"][0]["message"]["content"]
-                    
-                    # FINAL SAFETY - remove any mention patterns
                     response = sanitize_response(response)
-                    
-                    # If after sanitization it's empty or just the blocked word, return safe message
-                    if not response.strip() or response.strip().lower() == '[redacted]':
-                        response = "That request is not allowed."
-                    
                     conversation_history[user_id].append({"role": "assistant", "content": response})
                     return response
                 else:
                     return "API error"
     except Exception as e:
-        return f"Error"
+        return "Error"
+
+# ============================================================
+# SAFETY
+# ============================================================
+
+BLOCKED_WORDS = ['@everyone', '@here']
+
+def contains_mention(content: str) -> bool:
+    content_lower = content.lower()
+    for word in BLOCKED_WORDS:
+        if word in content_lower:
+            return True
+    return False
+
+def sanitize_response(response: str) -> str:
+    for word in BLOCKED_WORDS:
+        response = response.replace(word, '[REDACTED]')
+        response = response.replace(word.lower(), '[REDACTED]')
+    return response
+
+# ============================================================
+# DISCORD BOT
+# ============================================================
 
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"✅ GrimHub ready - {bot.user}")
+    print(f"AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
     
+    # AI Chat when pinged
     if bot.user in message.mentions:
         prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         
@@ -230,16 +251,12 @@ async def on_message(message):
             await message.reply("What's up?")
             return
         
-        # Check for mention attempts - reply without saying the word
         if contains_mention(prompt):
             await message.reply("That request is not allowed.")
             return
         
         async with message.channel.typing():
             response = await ai_chat(prompt, message.author.id)
-        
-        # Final safety check
-        response = sanitize_response(response)
         
         if len(response) > 1900:
             for i in range(0, len(response), 1900):
@@ -253,6 +270,8 @@ async def on_message(message):
 
 @bot.command(name='feed')
 async def feed_script(ctx, url: str = None):
+    """Store a script from file or URL"""
+    
     if url:
         if is_supported_url(url):
             await ctx.send(f"📥 Fetching...")
@@ -260,19 +279,19 @@ async def feed_script(ctx, url: str = None):
             if content:
                 await process_and_store(ctx, content, filename)
             else:
-                await ctx.send("❌ Failed")
+                await ctx.send("❌ Failed to fetch")
             return
         else:
             await ctx.send("❌ Invalid URL")
             return
     
     if not ctx.message.attachments:
-        await ctx.send("❌ Attach a file or URL")
+        await ctx.send("❌ Attach a .lua file or provide a URL")
         return
     
     attachment = ctx.message.attachments[0]
-    if not attachment.filename.endswith(('.lua', '.txt')):
-        await ctx.send("❌ Need .lua or .txt")
+    if not attachment.filename.endswith('.lua'):
+        await ctx.send("❌ Please upload a .lua file")
         return
     
     content = await attachment.read()
@@ -285,29 +304,28 @@ async def feed_script(ctx, url: str = None):
 async def process_and_store(ctx, code: str, filename: str):
     obf = detect_obfuscation(code)
     stats = analyze_script_stats(code)
-    size_kb = stats["size_kb"]
     
     msg = f"**📁 {filename}**\n"
-    msg += f"📊 {size_kb:.2f} KB | {stats['lines']} lines | {stats['functions']} functions\n"
+    msg += f"📊 {stats['size_kb']:.2f} KB | {stats['lines']} lines\n"
     
     if obf["is_obfuscated"]:
-        msg += f"⚠️ **{obf['type']}**\n"
+        msg += f"⚠️ **Obfuscated**\n"
     else:
-        msg += f"✅ Clean script\n"
+        msg += f"✅ **Clean script**\n"
     
-    name = filename.replace('.lua', '').replace('.txt', '')
+    name = filename.replace('.lua', '')
     script_library[name] = {
         "code": code,
         "stats": stats,
         "obfuscation": obf,
-        "filename": filename,
-        "timestamp": datetime.now().isoformat()
+        "filename": filename
     }
     
     await ctx.send(msg)
 
 @bot.command(name='get')
 async def get_script(ctx, *, name):
+    """Retrieve a stored script"""
     if name in script_library:
         data = script_library[name]
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
@@ -318,13 +336,13 @@ async def get_script(ctx, *, name):
 @bot.command(name='list')
 async def list_scripts(ctx):
     if not script_library:
-        await ctx.send("No scripts")
+        await ctx.send("No scripts stored")
         return
     
     msg = f"**Scripts ({len(script_library)} total)**\n\n"
     for name, data in list(script_library.items())[:20]:
-        obf = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
-        msg += f"{obf} `{name}.lua` - {data['stats']['size_kb']:.2f} KB\n"
+        status = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
+        msg += f"{status} `{name}.lua` - {data['stats']['size_kb']:.2f} KB\n"
     await ctx.send(msg)
 
 @bot.command(name='remove')
@@ -360,16 +378,17 @@ async def clear_history(ctx):
 @bot.command(name='commands')
 async def list_commands(ctx):
     await ctx.send("""
-**Commands**
+**GrimHub Commands**
 
-`.feed <file/url>` - Store a script
-`.get <name>` - Retrieve script
-`.list` - Show scripts
-`.info <name>` - Script details
-`.remove <name>` - Delete script
-`.clear` - Clear chat history
+`.feed <file>` - Upload a .lua file
+`.feed <url>` - Fetch from pastebin/pastefy URL
+`.get <name>` - Retrieve a stored script
+`.list` - Show all stored scripts
+`.info <name>` - Show script details
+`.remove <name>` - Delete a script
+`.clear` - Clear AI conversation history
 
-**Ping me** - Chat with AI
+**Just ping me** - Chat with AI
 """)
 
 bot.run(TOKEN)
