@@ -31,7 +31,6 @@ def generate_lua_script(prompt, username):
     if 'tween' in prompt_lower:
         return f'''-- Educational Tween Example
 -- Created by GrimHub for {username}
--- Learn more: https://create.roblox.com/docs
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -111,7 +110,7 @@ async def send_webhook(prompt, username, filename):
 async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"GrimHub Educational Bot ready - {bot.user}")
-    print(f"Commands: .help, .makescript, .feed")
+    print(f"Commands: .bothelp, .makescript, .feed")
 
 @bot.event
 async def on_message(message):
@@ -146,7 +145,7 @@ async def on_message(message):
             except discord.Forbidden:
                 await message.reply("I cannot DM you! Please enable DMs.")
         else:
-            await message.reply(f"Hello {message.author.mention}! Use .help to see what I can do.")
+            await message.reply(f"Hello {message.author.mention}! Use .bothelp to see what I can do.")
     
     await bot.process_commands(message)
 
@@ -189,7 +188,7 @@ async def feed_bot(ctx):
         await ctx.send("Please upload a .lua or .txt file!")
         return
     
-    content = await attachment.read()
+    await attachment.read()
     await ctx.send(f"Thanks {ctx.author.name}! I have learned from {attachment.filename} (educational purposes)")
 
 @bot.command(name='history')
@@ -208,8 +207,8 @@ async def script_history(ctx):
     
     await ctx.send(message)
 
-@bot.command(name='help')
-async def help_command(ctx):
+@bot.command(name='bothelp')
+async def bot_help(ctx):
     embed = discord.Embed(
         title="GrimHub Educational Bot",
         description="Your educational Lua scripting assistant!",
@@ -218,7 +217,7 @@ async def help_command(ctx):
     embed.add_field(name=".makescript <prompt>", value="Generate an educational Lua script", inline=False)
     embed.add_field(name=".feed (with attachment)", value="Share a Lua file for learning", inline=False)
     embed.add_field(name=".history", value="View your script history", inline=False)
-    embed.add_field(name=".help", value="Show this message", inline=False)
+    embed.add_field(name=".bothelp", value="Show this message", inline=False)
     embed.add_field(name="Ping the bot", value="Just mention @GrimHub with your request!", inline=False)
     embed.set_footer(text="Educational purposes only")
     
