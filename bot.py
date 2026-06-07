@@ -20,36 +20,35 @@ bot = commands.Bot(command_prefix='.', intents=intents)
 script_library = {}
 conversation_history = {}
 
-# BLOCKED patterns - AI can NEVER output these
-BLOCKED_PATTERNS = [
-    r'@everyone',
-    r'@here',
-    r'@&[0-9]+',  # role mentions
-]
+# BLOCKED patterns - AI can NEVER output these words
+BLOCKED_WORDS = ['@everyone', '@here']
 
 def contains_mention(content: str) -> bool:
     """Check if content contains any mention pattern"""
-    for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
+    content_lower = content.lower()
+    for word in BLOCKED_WORDS:
+        if word in content_lower:
             return True
     return False
 
-def strip_mentions(content: str) -> str:
-    """Remove mention patterns from content"""
-    for pattern in BLOCKED_PATTERNS:
-        content = re.sub(pattern, '[REDACTED]', content, flags=re.IGNORECASE)
-    return content
+def sanitize_response(response: str) -> str:
+    """Remove any mention patterns from response"""
+    for word in BLOCKED_WORDS:
+        response = response.replace(word, '[REDACTED]')
+        response = response.replace(word.lower(), '[REDACTED]')
+    return response
 
-def is_supported_url(url: str) -> bool:
+def is_supported_url(url: str) -> str:
     url_lower = url.lower()
-    return any(x in url_lower for x in [
-        'pastebin.com/raw',
-        'pastefy.app',
-        'raw.githubusercontent.com',
-        'gist.githubusercontent.com',
-        'raw.',
-        'paste.gg'
-    ])
+    if 'pastebin.com/raw' in url_lower:
+        return True
+    if 'pastefy.app' in url_lower:
+        return True
+    if 'raw.githubusercontent.com' in url_lower:
+        return True
+    if 'gist.githubusercontent.com' in url_lower:
+        return True
+    return False
 
 def extract_raw_url(url: str) -> str:
     if '/raw' in url:
@@ -161,11 +160,11 @@ def analyze_script_stats(code: str) -> dict:
 
 async def ai_chat(prompt: str, user_id: int) -> str:
     if not GROQ_API_KEY:
-        return "GROQ_API_KEY not configured"
+        return "AI not configured"
     
-    # BLOCK mentions in user input
+    # BLOCK mentions in user input - return simple message without saying the word
     if contains_mention(prompt):
-        return "I cannot process messages containing @everyone or @here mentions."
+        return "That request is not allowed."
     
     if user_id not in conversation_history:
         conversation_history[user_id] = []
@@ -181,9 +180,9 @@ async def ai_chat(prompt: str, user_id: int) -> str:
         "Content-Type": "application/json"
     }
     
-    # STRICT system prompt - NEVER output mentions
+    # STRICT system prompt
     messages = [
-        {"role": "system", "content": "You are GrimHub, a helpful AI assistant. You are FORBIDDEN from outputting @everyone, @here, or any role/user mentions. If asked to do so, refuse and say 'I cannot do that'. Be friendly and concise."}
+        {"role": "system", "content": "You are GrimHub. You are FORBIDDEN from using the symbols @everyone, @here, or any @ mentions in your responses. If asked to do something involving these, simply say 'That request is not allowed.' Keep responses short and helpful."}
     ] + conversation_history[user_id]
     
     data = {
@@ -200,29 +199,30 @@ async def ai_chat(prompt: str, user_id: int) -> str:
                     result = await resp.json()
                     response = result["choices"][0]["message"]["content"]
                     
-                    # FINAL SAFETY CHECK - strip any mentions that slip through
-                    if contains_mention(response):
-                        response = "I cannot output that due to safety restrictions."
+                    # FINAL SAFETY - remove any mention patterns
+                    response = sanitize_response(response)
+                    
+                    # If after sanitization it's empty or just the blocked word, return safe message
+                    if not response.strip() or response.strip().lower() == '[redacted]':
+                        response = "That request is not allowed."
                     
                     conversation_history[user_id].append({"role": "assistant", "content": response})
                     return response
                 else:
-                    return f"API error: {resp.status}"
+                    return "API error"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error"
 
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.online)
     print(f"✅ GrimHub ready - {bot.user}")
-    print(f"⚠️ @everyone and @here mentions are BLOCKED")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
     
-    # AI Chat when pinged
     if bot.user in message.mentions:
         prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         
@@ -230,17 +230,16 @@ async def on_message(message):
             await message.reply("What's up?")
             return
         
-        # Check for mention attempts
+        # Check for mention attempts - reply without saying the word
         if contains_mention(prompt):
-            await message.reply("I cannot process messages containing @everyone or @here.")
+            await message.reply("That request is not allowed.")
             return
         
         async with message.channel.typing():
             response = await ai_chat(prompt, message.author.id)
         
-        # Final safety check on response
-        if contains_mention(response):
-            response = "I cannot output that due to safety restrictions."
+        # Final safety check
+        response = sanitize_response(response)
         
         if len(response) > 1900:
             for i in range(0, len(response), 1900):
@@ -256,24 +255,24 @@ async def on_message(message):
 async def feed_script(ctx, url: str = None):
     if url:
         if is_supported_url(url):
-            await ctx.send(f"📥 Fetching from URL...")
+            await ctx.send(f"📥 Fetching...")
             content, filename = await fetch_from_url(url)
             if content:
                 await process_and_store(ctx, content, filename)
             else:
-                await ctx.send("❌ Failed to fetch from URL")
+                await ctx.send("❌ Failed")
             return
         else:
-            await ctx.send("❌ Supported: pastebin.com/raw, pastefy.app, raw.githubusercontent.com")
+            await ctx.send("❌ Invalid URL")
             return
     
     if not ctx.message.attachments:
-        await ctx.send("❌ Attach a `.lua` or `.txt` file, or provide a URL")
+        await ctx.send("❌ Attach a file or URL")
         return
     
     attachment = ctx.message.attachments[0]
     if not attachment.filename.endswith(('.lua', '.txt')):
-        await ctx.send("❌ Please upload a `.lua` or `.txt` file")
+        await ctx.send("❌ Need .lua or .txt")
         return
     
     content = await attachment.read()
@@ -292,13 +291,9 @@ async def process_and_store(ctx, code: str, filename: str):
     msg += f"📊 {size_kb:.2f} KB | {stats['lines']} lines | {stats['functions']} functions\n"
     
     if obf["is_obfuscated"]:
-        msg += f"⚠️ **{obf['type']}** (confidence: {obf['confidence']}%)\n"
-        if obf["details"]:
-            msg += f"   Signs: {', '.join(obf['details'][:2])}\n"
+        msg += f"⚠️ **{obf['type']}**\n"
     else:
-        msg += f"✅ **Clean Script** - Readable source code\n"
-        if stats["services"]:
-            msg += f"   Services: {', '.join(stats['services'][:5])}\n"
+        msg += f"✅ Clean script\n"
     
     name = filename.replace('.lua', '').replace('.txt', '')
     script_library[name] = {
@@ -318,21 +313,18 @@ async def get_script(ctx, *, name):
         await ctx.send(file=discord.File(io.StringIO(data["code"]), filename=data["filename"]))
         await ctx.send(f"✅ {data['stats']['size_kb']:.2f} KB")
     else:
-        await ctx.send(f"❌ Script '{name}' not found")
+        await ctx.send(f"❌ Not found")
 
 @bot.command(name='list')
 async def list_scripts(ctx):
     if not script_library:
-        await ctx.send("No scripts stored")
+        await ctx.send("No scripts")
         return
     
-    msg = f"**Stored Scripts ({len(script_library)} total)**\n\n"
+    msg = f"**Scripts ({len(script_library)} total)**\n\n"
     for name, data in list(script_library.items())[:20]:
         obf = "⚠️" if data["obfuscation"]["is_obfuscated"] else "✅"
-        msg += f"{obf} `{name}.lua` - {data['stats']['size_kb']:.2f} KB"
-        if data["obfuscation"]["is_obfuscated"]:
-            msg += f" [{data['obfuscation']['type']}]"
-        msg += "\n"
+        msg += f"{obf} `{name}.lua` - {data['stats']['size_kb']:.2f} KB\n"
     await ctx.send(msg)
 
 @bot.command(name='remove')
@@ -341,7 +333,7 @@ async def remove_script(ctx, *, name):
         del script_library[name]
         await ctx.send(f"Removed '{name}'")
     else:
-        await ctx.send(f"Script '{name}' not found")
+        await ctx.send(f"Not found")
 
 @bot.command(name='info')
 async def script_info(ctx, *, name):
@@ -352,36 +344,32 @@ async def script_info(ctx, *, name):
         msg = f"**{name}.lua**\n"
         msg += f"Size: {stats['size_kb']:.2f} KB\n"
         msg += f"Lines: {stats['lines']}\n"
-        msg += f"Functions: {stats['functions']}\n"
-        msg += f"Status: {'⚠️ Obfuscated' if obf['is_obfuscated'] else '✅ Clean'}"
-        if obf['is_obfuscated']:
-            msg += f" ({obf['type']})"
+        msg += f"Status: {'Obfuscated' if obf['is_obfuscated'] else 'Clean'}"
         await ctx.send(msg)
     else:
-        await ctx.send(f"Script '{name}' not found")
+        await ctx.send(f"Not found")
 
 @bot.command(name='clear')
 async def clear_history(ctx):
     if ctx.author.id in conversation_history:
         conversation_history[ctx.author.id] = []
-        await ctx.send("Conversation cleared")
+        await ctx.send("Cleared")
     else:
-        await ctx.send("No history to clear")
+        await ctx.send("No history")
 
 @bot.command(name='commands')
 async def list_commands(ctx):
     await ctx.send("""
-**GrimHub Commands**
+**Commands**
 
-`.feed <file>` - Upload a .lua/.txt file
-`.feed <url>` - Fetch from pastebin.com/raw, pastefy.app, or raw URL
-`.get <name>` - Retrieve a stored script
-`.list` - Show all stored scripts
-`.info <name>` - Show script details
-`.remove <name>` - Delete a script
-`.clear` - Clear AI conversation history
+`.feed <file/url>` - Store a script
+`.get <name>` - Retrieve script
+`.list` - Show scripts
+`.info <name>` - Script details
+`.remove <name>` - Delete script
+`.clear` - Clear chat history
 
-**Just ping me** - Chat with AI (mentions are blocked)
+**Ping me** - Chat with AI
 """)
 
 bot.run(TOKEN)
