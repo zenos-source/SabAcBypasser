@@ -23,22 +23,11 @@ script_library = {}
 conversation_history = {}
 
 # ============================================================
-# OBFUSCATION DETECTION WITH ENTROPY
+# OBFUSCATION DETECTION
 # ============================================================
 
-def calculate_entropy(text: str) -> float:
-    """Calculate Shannon entropy of a string (higher = more random/obfuscated)"""
-    if not text:
-        return 0
-    entropy = 0
-    for x in range(256):
-        p_x = text.count(chr(x)) / len(text)
-        if p_x > 0:
-            entropy += -p_x * math.log2(p_x)
-    return entropy
-
 def detect_obfuscation(code: str) -> dict:
-    """Detect obfuscation using entropy and structural analysis"""
+    """Detect actual obfuscation - not just entropy"""
     
     result = {
         "is_obfuscated": False,
@@ -49,67 +38,85 @@ def detect_obfuscation(code: str) -> dict:
         "suggestions": []
     }
     
-    # Calculate entropy of first 10k chars
-    sample = code[:10000]
-    entropy = calculate_entropy(sample)
+    # ============================================================
+    # 1. FIRST - Check for CLEAN script indicators
+    # ============================================================
     
-    # High entropy = obfuscated (random-looking characters)
-    if entropy > 4.5:
-        result["is_obfuscated"] = True
-        result["type"] = "Obfuscated"
-        result["confidence"] = min(95, int(entropy * 15))
-        result["details"].append(f"Entropy: {entropy:.2f}")
-        return result
+    clean_indicators = 0
     
-    # Check for extremely long lines (obfuscation pattern)
-    lines = code.split('\n')
-    long_lines = [l for l in lines if len(l) > 1000]
-    if len(long_lines) > 3:
-        result["is_obfuscated"] = True
-        result["type"] = "Obfuscated"
-        result["confidence"] = 85
-        result["details"].append(f"Lines >1000 chars: {len(long_lines)}")
-        return result
+    # Proper Roblox API usage
+    if re.search(r'game:GetService\(["\'](TweenService|Players|RunService|ReplicatedStorage)["\']\)', code):
+        clean_indicators += 1
     
-    # Check ratio of alphanumeric to non-alphanumeric
-    alnum = sum(c.isalnum() for c in sample)
-    total = len(sample)
-    if total > 0:
-        ratio = alnum / total
-        if ratio < 0.4:
-            result["is_obfuscated"] = True
-            result["type"] = "Obfuscated"
-            result["confidence"] = 80
-            result["details"].append(f"Alnum ratio: {ratio:.2f}")
-            return result
+    # Proper function definitions with readable names
+    if re.search(r'function\s+[A-Za-z][A-Za-z0-9_]+\s*\([^)]*\)', code):
+        clean_indicators += 1
     
-    # Specific obfuscator patterns
-    if re.search(r'Luraph|loadstring\(game:HttpGet', code):
-        result["is_obfuscated"] = True
-        result["type"] = "Luraph"
+    # Comments explaining code
+    if re.search(r'--\[\[.*?\]\]|--\s+[A-Za-z]', code, re.DOTALL):
+        clean_indicators += 1
+    
+    # Proper local variable declarations
+    if re.search(r'local\s+[A-Za-z][A-Za-z0-9_]+\s*=\s*game:', code):
+        clean_indicators += 1
+    
+    # Indentation (tabs or spaces)
+    if re.search(r'\n\t+local|\n  local', code):
+        clean_indicators += 1
+    
+    # If it has 3+ clean indicators, it's CLEAN source code
+    if clean_indicators >= 3:
+        result["is_obfuscated"] = False
+        result["type"] = "clean"
         result["confidence"] = 95
-        result["details"].append("Luraph pattern")
+        result["details"].append("Readable source code")
         return result
     
+    # ============================================================
+    # 2. Check for ACTUAL obfuscation
+    # ============================================================
+    
+    # WeAreDevs: octal strings in string table
+    if re.search(r'local d = \{\\d{3}', code):
+        result["is_obfuscated"] = True
+        result["type"] = "WeAreDevs"
+        result["confidence"] = 95
+        result["details"].append("Octal encoded strings")
+        return result
+    
+    # MoonSec V3: VM wrapper pattern
     if re.search(r'return\(\s*function\s*\([^)]*\)\s*local\s+[a-z]+\s*=\s*\{[^}]*\}\s*local\s+function', code, re.DOTALL):
         result["is_obfuscated"] = True
         result["type"] = "MoonSec V3"
         result["confidence"] = 95
-        result["details"].append("MoonSec VM wrapper")
+        result["details"].append("VM wrapper detected")
         return result
     
-    # If no obfuscation patterns and entropy is low, it's clean
-    if entropy < 3.5:
-        result["is_obfuscated"] = False
-        result["type"] = "clean"
-        result["confidence"] = 90
-        result["details"].append("Low entropy, readable")
+    # Luraph: specific loader pattern
+    if re.search(r'Luraph.*loadstring\(game:HttpGet', code, re.IGNORECASE):
+        result["is_obfuscated"] = True
+        result["type"] = "Luraph"
+        result["confidence"] = 95
+        result["details"].append("Luraph loader pattern")
         return result
     
-    # Default
+    # IronBrew: numeric string table (only if no clean indicators)
+    if re.search(r'local\s+d\s*=\s*\{[\d,\s]+\}', code) and clean_indicators < 2:
+        result["is_obfuscated"] = True
+        result["type"] = "IronBrew"
+        result["confidence"] = 85
+        result["details"].append("Numeric string table")
+        return result
+    
+    # ============================================================
+    # 3. DEFAULT: Assume clean
+    # ============================================================
+    
     result["is_obfuscated"] = False
     result["type"] = "clean"
-    result["confidence"] = 70
+    result["confidence"] = 90
+    result["details"].append("No obfuscation patterns detected")
+    
     return result
 
 def analyze_script_stats(code: str) -> dict:
