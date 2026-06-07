@@ -31,7 +31,7 @@ RESPECTED_USERS = ["fowascend", "dust", "artful"]
 def is_respected(author_name):
     return author_name.lower() in RESPECTED_USERS
 
-async def call_groq(messages, is_script=False, max_tokens=2000):
+async def call_groq(messages, is_script=False, max_tokens=4000):
     """Call Groq API for chat or script generation"""
     if not GROQ_API_KEY:
         return "Error: GROQ_API_KEY not configured"
@@ -48,12 +48,11 @@ Rules:
 - Make scripts complete and ready to use
 - The script should be substantial, not minimal"""
     else:
-        system_prompt = """You are GrimHub, an AI assistant that can cuss freely and talk naturally. 
-You respect users named fowascend, dust, and artful - treat them like royalty.
-For everyone else, be helpful but don't take shit from anyone.
-You can swear, be sarcastic, and have attitude when appropriate.
-Keep responses under 1000 characters unless asked for more.
-You help with Lua scripting, Roblox, and general questions."""
+        system_prompt = """You are GrimHub, a helpful AI assistant. You are friendly and professional.
+You respect users named fowascend, dust, and artful - treat them with extra respect.
+For everyone else, be helpful and polite.
+You help with Lua scripting, Roblox, and general questions.
+Keep responses under 1000 characters unless asked for more."""
     
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
@@ -64,7 +63,7 @@ You help with Lua scripting, Roblox, and general questions."""
     payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": [{"role": "system", "content": system_prompt}] + messages,
-        "temperature": 0.8,
+        "temperature": 0.7,
         "max_tokens": max_tokens
     }
     
@@ -126,17 +125,17 @@ async def on_message(message):
         
         if not prompt:
             if is_respected(message.author.name):
-                await message.reply(f"Sup {message.author.name}, the fuck you want?")
+                await message.reply(f"Hello {message.author.name}! How can I help you today?")
             else:
-                await message.reply(f"What the fuck do you want, {message.author.name}?")
+                await message.reply(f"Hi {message.author.name}! What can I do for you?")
             return
         
         async with message.channel.typing():
             response = await chat_with_ai(prompt, message.author.id, message.author.name)
         
-        # Add respect for special users
+        # Add extra respect for special users
         if is_respected(message.author.name):
-            response += f"\n\n- {message.author.name}, you already know."
+            response += f"\n\n- Always here to help, {message.author.name}."
         
         # Split long responses
         if len(response) > 1900:
@@ -159,7 +158,7 @@ async def make_script(ctx, *, prompt):
         await ctx.send("❌ GROQ_API_KEY not configured. Add to Railway variables.")
         return
     
-    await ctx.send(f"🤖 Writing a detailed script for you... This might take a moment. Check your DMs!" if is_respected(ctx.author.name) else f"🤖 Fine, writing your damn script... Check your DMs.")
+    await ctx.send(f"✨ Writing a detailed script for you... This may take a moment. Check your DMs!")
     
     script = await generate_lua_script(prompt)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -199,24 +198,23 @@ async def make_script(ctx, *, prompt):
         file_obj = discord.File(io.StringIO(script), filename=filename)
         await ctx.author.send(f"**Prompt:** {prompt}\n**Size:** {script_size_kb:.2f} KB\n", file=file_obj)
         
-        size_msg = f"✅ Script sent to your DMs! ({script_size_kb:.2f} KB)"
         if is_respected(ctx.author.name):
-            await ctx.send(f"✅ Here's your script, {ctx.author.name}. Hope this shit works for you.")
+            await ctx.send(f"✅ Here's your script, {ctx.author.name}! ({script_size_kb:.2f} KB)")
         else:
-            await ctx.send(size_msg)
+            await ctx.send(f"✅ Script sent to your DMs! ({script_size_kb:.2f} KB)")
     except discord.Forbidden:
-        await ctx.send("❌ I cannot DM you! Enable your DMs, dumbass.")
+        await ctx.send("❌ I cannot DM you! Please enable DMs from server members.")
 
 @bot.command(name='feed')
 async def feed_script(ctx):
     """Feed a Lua file to the AI for learning"""
     if not ctx.message.attachments:
-        await ctx.send("❌ Attach a fucking file next time.")
+        await ctx.send("❌ Please attach a `.lua` or `.txt` file!")
         return
     
     attachment = ctx.message.attachments[0]
     if not attachment.filename.endswith(('.lua', '.txt')):
-        await ctx.send("❌ That's not a Lua file, dumbass. Give me .lua or .txt")
+        await ctx.send("❌ Please upload a `.lua` or `.txt` file!")
         return
     
     content = await attachment.read()
@@ -247,18 +245,18 @@ async def feed_script(ctx):
             await webhook.send(embed=embed, file=file_obj)
         
         if is_respected(ctx.author.name):
-            await ctx.send(f"✅ Got it, {ctx.author.name}. I'll learn from this shit.")
+            await ctx.send(f"✅ Thank you, {ctx.author.name}! I'll learn from this script.")
         else:
-            await ctx.send(f"✅ Fed `{attachment.filename}` ({size_kb:.2f} KB) to my brain. Thanks, I guess.")
+            await ctx.send(f"✅ Fed `{attachment.filename}` ({size_kb:.2f} KB) to my learning database!")
         
     except Exception as e:
-        await ctx.send(f"❌ Error reading your file: {e}")
+        await ctx.send(f"❌ Error reading file: {e}")
 
 @bot.command(name='history')
 async def script_history(ctx):
     """View your script generation history"""
     if ctx.author.id not in user_scripts or not user_scripts[ctx.author.id]:
-        await ctx.send("📭 You haven't made any scripts yet, dumbass. Use `.makescript`")
+        await ctx.send("📭 No scripts generated yet. Use `.makescript`")
         return
     
     history = user_scripts[ctx.author.id]
@@ -279,22 +277,22 @@ async def clear_history(ctx):
     if ctx.author.id in conversation_history:
         conversation_history[ctx.author.id] = []
         if is_respected(ctx.author.name):
-            await ctx.send(f"✅ Cleared, {ctx.author.name}. Fresh slate.")
+            await ctx.send(f"✅ Conversation cleared, {ctx.author.name}. Ready for a fresh start!")
         else:
-            await ctx.send("✅ Conversation history cleared. Try not to be annoying now.")
+            await ctx.send("✅ Conversation history cleared.")
     else:
-        await ctx.send("📭 You don't have any conversation history, dumbass.")
+        await ctx.send("📭 You don't have any conversation history to clear.")
 
 @bot.command(name='respect')
 async def show_respected(ctx):
     """Show who the bot respects"""
     embed = discord.Embed(
         title="👑 Respected Users",
-        description="These users get special treatment:",
+        description="These users receive special recognition:",
         color=0xffaa00
     )
     embed.add_field(name="Users", value=", ".join(RESPECTED_USERS), inline=False)
-    embed.set_footer(text="Don't be jealous, earn it.")
+    embed.set_footer(text="Respect is earned through contribution.")
     await ctx.send(embed=embed)
 
 @bot.command(name='commands')
@@ -302,15 +300,15 @@ async def list_commands(ctx):
     """Show all commands"""
     embed = discord.Embed(
         title="GrimHub Bot Commands",
-        description="AI-powered Lua scripting assistant with attitude",
+        description="AI-powered Lua scripting assistant",
         color=0x00ff00
     )
-    embed.add_field(name="**@GrimHub <message>**", value="Chat with AI (swearing allowed)", inline=False)
+    embed.add_field(name="**@GrimHub <message>**", value="Chat with the AI assistant", inline=False)
     embed.add_field(name="`.makescript <prompt>`", value="Generate a DETAILED Lua script (1KB-2MB)", inline=False)
     embed.add_field(name="`.feed` (with .lua file)", value="Feed a script to the AI for learning", inline=False)
     embed.add_field(name="`.history`", value="View your script history with sizes", inline=False)
     embed.add_field(name="`.clear`", value="Clear your conversation history", inline=False)
-    embed.add_field(name="`.respect`", value="Show who gets special treatment", inline=False)
+    embed.add_field(name="`.respect`", value="Show who gets special recognition", inline=False)
     embed.add_field(name="`.commands`", value="Show this help", inline=False)
     embed.set_footer(text=f"Respecting: {', '.join(RESPECTED_USERS)} | Powered by Groq AI")
     
